@@ -6,9 +6,15 @@ BUILD_DIR="build"
 COMMON_DIR="common"
 
 CIRCUIT_FILES=(
-  "shuffle_encrypt/shuffle_encrypt"
-  "decrypt/decrypt"
+    "decrypt/decrypt"
   "test/test_elgamal_encrypt"
+  "test/test_elgamal_decrypt"
+  "test/test_bandersnatch_add"
+  "test/test_bandersnatch_double"
+  "test/test_bandersnatch_scalar_mul"
+  "test/test_column_permutation"
+  "test/test_is_permutation"
+  "common/bandersnatch"
 )
 
 POT_FILE="pot21_final.ptau"
@@ -22,10 +28,11 @@ function compile() {
         echo "➡️  Compiling $CIRCUIT_NAME..."
         mkdir -p $BUILD_DIR/$(dirname "$CIRCUIT_PATH")
         circom "$CIRCUIT_NAME" \
-          --r1cs --wasm --sym \
+          --r1cs --wasm --sym --O2 --prime bls12381\
           -l $COMMON_DIR \
           -l node_modules/circomlib/circuits \
           -o "$BUILD_DIR/$(dirname "$CIRCUIT_PATH")"
+          
 
         echo "✅ Compiled: $BUILD_DIR/$CIRCUIT_NAME"
     done
@@ -36,7 +43,7 @@ function setup() {
 
     if [ ! -f "$POT_FILE" ]; then
       echo "⚡ Powers of Tau not found. Generating new..."
-      snarkjs powersoftau new bn128 21 pot21_0000.ptau -v
+      snarkjs powersoftau new bls12-381 21 pot21_0000.ptau -v
       snarkjs powersoftau contribute pot21_0000.ptau pot21_0001.ptau --name="First contribution" -v
       snarkjs powersoftau prepare phase2 pot21_0001.ptau "$POT_FILE" -v
 

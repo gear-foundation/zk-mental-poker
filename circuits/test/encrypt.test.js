@@ -5,100 +5,367 @@ import { describe, it } from "mocha";
 // @ts-ignore
 import * as circom_tester from "circom_tester";
 // @ts-ignore
-import * as ff from "ffjavascript";
+//import * as ff from "ffjavascript";
+import { F1Field } from "ffjavascript";
+import { randomBytes } from 'crypto';
+const q = BigInt("52435875175126190479447740508185965837690552500527637822603658699938581184513"); // BLS12-381 scalar field
+const F = new F1Field(q);
+const neutral = { X: 0n, Y: 1n, Z: 1n };
+const base = {
+    X: BigInt("0x29c132cc2c0b34c5743711777bbe42f32b79c022ad998465e1e71866a252ae18"),
+    Y: BigInt("0x2a6c669eda123e0f157d8b50badcd586358cad81eee464605e3167b6cc974166"),
+    Z: 1n,
+};
+// Параметры кривой Bandersnatch
+const a = BigInt(-5);
+// const d = BigInt("0x1cfb69d4ca675f520cde0ab06b1d5199a5e21b2329c1228c6232a6a4d0602e5");
+const d = 45022363124591815672509500913686876175488063829319466900776701791074614335719n;
 chai.use(chaiAsPromised);
-const CIRCUIT_PATH = "./test/test_elgamal_encrypt.circom";
-function toCircomInput(obj) {
-    if (typeof obj === "bigint") {
-        return obj.toString();
-    }
-    else if (Array.isArray(obj)) {
-        return obj.map(toCircomInput);
-    }
-    else if (typeof obj === "object" && obj !== null) {
-        const res = {};
-        for (const key of Object.keys(obj)) {
-            res[key] = toCircomInput(obj[key]);
-        }
-        return res;
-    }
-    else {
-        return obj;
+function generateRandomScalar(numBits) {
+    const byteLength = Math.ceil(numBits / 8);
+    const max = 1n << BigInt(numBits);
+    while (true) {
+        const buf = randomBytes(byteLength);
+        let sk = BigInt("0x" + buf.toString("hex"));
+        if (sk < max)
+            return sk;
     }
 }
-describe("ElGamal Encrypt Circuit", function () {
-    this.timeout(100000);
-    let babyjub;
-    let F;
-    let scalar;
-    const BASE_POINT = [
-        5299619240641551281634865583518297030282874472190772894086521144482721001553n,
-        16950150798460657717958625567821834550301663161624707787222815936182638968203n
-    ];
-    function generateRandomScalar(numBits) {
-        const threshold = scalar.exp(scalar.e(2), scalar.e(numBits));
-        let sk;
-        do {
-            const randomFieldElement = babyjub.F.random();
-            sk = scalar.fromRprLE(randomFieldElement);
-        } while (scalar.geq(sk, threshold));
-        return sk;
+// projectiveAdd и scalarMul должны быть реализованы для твоей кривой
+function initializeDeck(numCards, F, a, d) {
+    const deck = [];
+    for (let i = 1; i <= numCards; i++) {
+        const ic0 = { ...neutral };
+        const ic1 = scalarMul(F, a, d, base, BigInt(i));
+        deck.push([ic0, ic1]);
     }
+    return deck;
+}
+function permuteMatrix(matrix, permutation) {
+    const permuted = Array.from({ length: 6 }, () => Array(52));
+    for (let row = 0; row < 6; row++) {
+        for (let col = 0; col < 52; col++) {
+            permuted[row][col] = matrix[row][permutation[col]];
+        }
+    }
+    return permuted;
+}
+function generatePermutation(n) {
+    const arr = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+function elgamalEncryptDeck(F, a, d, G, pk, deck) {
+    const encrypted = Array.from({ length: 6 }, () => Array(52).fill(0n));
+    const rScalars = [];
+    for (let i = 0; i < 52; i++) {
+        const ic0 = {
+            X: deck[0][i],
+            Y: deck[1][i],
+            Z: deck[2][i],
+        };
+        const ic1 = {
+            X: deck[3][i],
+            Y: deck[4][i],
+            Z: deck[5][i],
+        };
+        const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, { ic0, ic1 });
+        rScalars.push(r);
+        encrypted[0][i] = c0.X;
+        encrypted[1][i] = c0.Y;
+        encrypted[2][i] = c0.Z;
+        encrypted[3][i] = c1.X;
+        encrypted[4][i] = c1.Y;
+        encrypted[5][i] = c1.Z;
+    }
+    return { encrypted, rScalars };
+}
+function elgamalEncrypt(F, a, d, G, pk, msg) {
+    const r = generateRandomScalar(128);
+    const rG = scalarMul(F, a, d, G, r);
+    const rPK = scalarMul(F, a, d, pk, r);
+    const c0 = projectiveAdd(F, a, d, rG, { ...msg.ic0 });
+    const c1 = projectiveAdd(F, a, d, rPK, { ...msg.ic1 });
+    return { c0, c1, r };
+}
+function toAffine(F, P) {
+    const x = F.div(P.X, P.Z);
+    const y = F.div(P.Y, P.Z);
+    return { x, y };
+}
+function expectAffineEqual(F, p1, p2) {
+    expect(F.eq(p1.x, p2.x)).to.equal(true);
+    expect(F.eq(p1.y, p2.y)).to.equal(true);
+}
+function elgamalDecrypt(F, a, d, sk, c0, c1) {
+    const skC0 = scalarMul(F, a, d, c0, sk); // sk * c0
+    const skC0Neg = { X: F.neg(skC0.X), Y: skC0.Y, Z: skC0.Z }; // −skC0
+    const decrypted = projectiveAdd(F, a, d, c1, skC0Neg); // c1 − skC0
+    return decrypted;
+}
+function initDeck(numCards) {
+    const deck = Array.from({ length: 6 }, () => Array(numCards).fill(0n));
+    for (let i = 0; i < numCards; i++) {
+        const scalar = BigInt(i + 1);
+        deck[0][i] = 0n;
+        deck[1][i] = 1n;
+        deck[2][i] = 1n;
+        const P = scalarMul(F, a, d, base, scalar);
+        deck[3][i] = P.X;
+        deck[4][i] = P.Y;
+        deck[5][i] = P.Z;
+    }
+    return deck;
+}
+describe("ShuffleEncrypt", function () {
+    let circuit;
+    this.timeout(100000);
     before(async () => {
-        // @ts-ignore
-        const circomlibjs = await import("circomlibjs");
-        babyjub = await circomlibjs.buildBabyjub();
-        scalar = ff.Scalar;
-        F = babyjub.F;
+        circuit = await circom_tester.wasm("./shuffle_encrypt/shuffle_encrypt.circom", { prime: "bls12381" });
     });
-    it("should encrypt a point correctly", async () => {
-        const circuit = await circom_tester.wasm(CIRCUIT_PATH);
-        // Generate test data
-        const sk = generateRandomScalar(251);
-        const pk = babyjub.mulPointEscalar(babyjub.Base8, sk);
-        const r = generateRandomScalar(251);
-        const ic0 = [F.random(), F.random()];
-        const ic1 = [F.random(), F.random()];
-        // --- ElGamal encryption --- //
-        const rG = babyjub.mulPointEscalar(babyjub.Base8, r);
-        const rPK = babyjub.mulPointEscalar(pk, r);
-        const expectedC0 = babyjub.addPoint(rG, ic0);
-        const expectedC1 = babyjub.addPoint(rPK, ic1);
-        // Prepare circuit inputs
+    it("should accept correct permutation and encryption", async () => {
+        const deck = initDeck(52);
+        const sk = generateRandomScalar(128);
+        const pk = scalarMul(F, a, d, base, sk);
+        const { encrypted, rScalars } = elgamalEncryptDeck(F, a, d, base, pk, deck);
+        const permutation = generatePermutation(52);
+        const shuffled = permuteMatrix(encrypted, permutation);
         const input = {
-            ic0: ic0.map(x => babyjub.F.toObject(x)),
-            ic1: ic1.map(x => babyjub.F.toObject(x)),
-            r: BigInt(r),
-            pk: pk.map((x) => babyjub.F.toObject(x))
+            pk: [pk.X.toString(), pk.Y.toString(), pk.Z.toString()],
+            R: rScalars.map(r => r.toString()),
+            permutation,
+            original: deck.map((row) => row.map((v) => v.toString())),
+            permuted: shuffled.map((row) => row.map((v) => v.toString())),
         };
-        // Calculate witness
         const witness = await circuit.calculateWitness(input, true);
-        // Fetch outputs
-        const c0x = witness[1];
-        const c0y = witness[2];
-        const c1x = witness[3];
-        const c1y = witness[4];
-        // Validate that circuit outputs match manual computation
-        expect(c0x.toString()).to.equal(babyjub.F.toObject(expectedC0[0]).toString());
-        expect(c0y.toString()).to.equal(babyjub.F.toObject(expectedC0[1]).toString());
-        expect(c1x.toString()).to.equal(babyjub.F.toObject(expectedC1[0]).toString());
-        expect(c1y.toString()).to.equal(babyjub.F.toObject(expectedC1[1]).toString());
-    });
-    it("should fail for an invalid point", async () => {
-        const circuit = await circom_tester.wasm(CIRCUIT_PATH);
-        const invalidPk = {
-            x: "1234567890123456789012345678901234567890",
-            y: "9876543210987654321098765432109876543210"
-        };
-        const r = generateRandomScalar(251);
-        const ic0 = [F.random(), F.random()];
-        const ic1 = [F.random(), F.random()];
-        const input = {
-            ic0: ic0.map(x => babyjub.F.toObject(x)),
-            ic1: ic1.map(x => babyjub.F.toObject(x)),
-            r: BigInt(r),
-            pk: invalidPk
-        };
-        await expect(circuit.calculateWitness(input, true)).to.be.rejectedWith(Error, /Not enough values/);
+        expect(witness[1]).to.equal(1n);
     });
 });
+describe("Permutation Circuit", function () {
+    let circuit;
+    before(async () => {
+        circuit = await circom_tester.wasm("./test/test_is_permutation.circom", { prime: "bls12381" });
+    });
+    it("valid permutation: identity", async () => {
+        const input = [18, 31, 21, 50, 9, 36, 7, 16, 11, 0, 27, 25, 14, 1, 34, 5, 24, 10, 8, 51, 39, 23, 33, 2, 13, 6, 37, 28, 29, 43, 32, 48, 20, 17, 38, 49, 44, 41, 22, 19, 30, 4, 26, 45, 47, 3, 42, 35, 15, 40, 46, 12];
+        const witness = await circuit.calculateWitness({ in: input }, true);
+        expect(witness[1]).to.equal(1n);
+    });
+    it("invalid permutation: duplicate", async () => {
+        const input = [18, 18, 21, 50, 9, 36, 7, 16, 11, 0, 27, 25, 14, 1, 34, 5, 24, 10, 8, 51, 39, 23, 33, 2, 13, 6, 37, 28, 29, 43, 32, 48, 20, 17, 38, 49, 44, 41, 22, 19, 30, 4, 26, 45, 47, 3, 42, 35, 15, 40, 46, 12];
+        const witness = await circuit.calculateWitness({ in: input }, true);
+        expect(witness[1]).to.equal(0n);
+    });
+    it("invalid permutation: out_of_bounds", async () => {
+        const input = [18, 31, 21, 50, 9, 52, 7, 16, 11, 0, 27, 25, 14, 1, 34, 5, 24, 10, 8, 51, 39, 23, 33, 2, 13, 6, 37, 28, 29, 43, 32, 48, 20, 17, 38, 49, 44, 41, 22, 19, 30, 4, 26, 45, 47, 3, 42, 35, 15, 40, 46, 12];
+        const witness = await circuit.calculateWitness({ in: input }, true);
+        expect(witness[1]).to.equal(0n);
+    });
+});
+describe("ElGamal Encrypt and Decrypt Circuits", function () {
+    let encCircuit;
+    let decCircuit;
+    let G;
+    before(async () => {
+        encCircuit = await circom_tester.wasm("./test/test_elgamal_encrypt.circom", { prime: "bls12381" });
+        decCircuit = await circom_tester.wasm("./test/test_elgamal_decrypt.circom", { prime: "bls12381" });
+        G = {
+            X: BigInt("0x29c132cc2c0b34c5743711777bbe42f32b79c022ad998465e1e71866a252ae18"),
+            Y: BigInt("0x2a6c669eda123e0f157d8b50badcd586358cad81eee464605e3167b6cc974166"),
+            Z: 1n
+        };
+    });
+    it("should encrypt a point correctly", async () => {
+        // Generate test data
+        const sk = generateRandomScalar(128);
+        const pk = scalarMul(F, a, d, G, sk);
+        // --- ElGamal encryption --- //
+        const msg = {
+            ic0: { X: 0n, Y: 1n, Z: 1n },
+            ic1: scalarMul(F, a, d, G, generateRandomScalar(128))
+        };
+        const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, msg);
+        // Prepare circuit inputs
+        const input = {
+            r: r.toString(),
+            pk: [pk.X.toString(), pk.Y.toString(), pk.Z.toString()],
+            ic0: [msg.ic0.X.toString(), msg.ic0.Y.toString(), msg.ic0.Z.toString()],
+            ic1: [msg.ic1.X.toString(), msg.ic1.Y.toString(), msg.ic1.Z.toString()]
+        };
+        const witness = await encCircuit.calculateWitness(input, true);
+        // Fetch outputs
+        const c0out = {
+            X: witness[1],
+            Y: witness[2],
+            Z: witness[3],
+        };
+        const c1out = {
+            X: witness[4],
+            Y: witness[5],
+            Z: witness[6],
+        };
+        const c0Affine = toAffine(F, c0);
+        const c1Affine = toAffine(F, c1);
+        const c0outAffine = toAffine(F, c0out);
+        const c1outAffine = toAffine(F, c1out);
+        expectAffineEqual(F, c0Affine, c0outAffine);
+        expectAffineEqual(F, c1Affine, c1outAffine);
+    });
+    it("Elgamal decrypt: decrypt(c1 - sk*c0) == message", async () => {
+        const sk = generateRandomScalar(128);
+        const pk = scalarMul(F, a, d, G, sk);
+        const msg = {
+            ic0: { X: 0n, Y: 1n, Z: 1n },
+            ic1: scalarMul(F, a, d, G, generateRandomScalar(128))
+        };
+        const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, msg);
+        const witness = await decCircuit.calculateWitness({
+            c0: [c0.X.toString(), c0.Y.toString(), c0.Z.toString()],
+            sk: sk.toString()
+        }, true);
+        const skC0 = {
+            X: BigInt(witness[1]),
+            Y: BigInt(witness[2]),
+            Z: BigInt(witness[3])
+        };
+        // с1 - sk*c0
+        const decrypted = projectiveAdd(F, a, d, c1, skC0);
+        expectAffineEqual(F, toAffine(F, decrypted), toAffine(F, msg.ic1));
+    });
+    it("should allow N signers to sequentially encrypt and independently decrypt", async () => {
+        const N = 5;
+        const secretKeys = Array.from({ length: N }, () => generateRandomScalar(128));
+        const publicKeys = secretKeys.map(sk => scalarMul(F, a, d, G, sk));
+        // Aggregate public key
+        const pkAgg = publicKeys.reduce((acc, pk) => projectiveAdd(F, a, d, acc, pk), { X: 0n, Y: 1n, Z: 1n });
+        const msg = scalarMul(F, a, d, G, generateRandomScalar(128));
+        // Sequential encryption
+        let state = { ic0: { X: 0n, Y: 1n, Z: 1n }, ic1: msg };
+        for (let i = 0; i < N; i++) {
+            let step = elgamalEncrypt(F, a, d, G, pkAgg, state);
+            state = { ic0: step.c0, ic1: step.c1 };
+        }
+        const c0 = state.ic0;
+        const c1 = state.ic1;
+        // Sequential decryption (aggregate negation of sk_i * c0)
+        let negatedSum = { X: 0n, Y: 1n, Z: 1n };
+        for (const sk of secretKeys) {
+            const witness = await decCircuit.calculateWitness({
+                c0: [c0.X.toString(), c0.Y.toString(), c0.Z.toString()],
+                sk: sk.toString()
+            }, true);
+            const negated = {
+                X: BigInt(witness[1]),
+                Y: BigInt(witness[2]),
+                Z: BigInt(witness[3])
+            };
+            negatedSum = projectiveAdd(F, a, d, negatedSum, negated);
+        }
+        const decrypted = projectiveAdd(F, a, d, c1, negatedSum);
+        const mRecovered = toAffine(F, decrypted);
+        const mExpected = toAffine(F, msg);
+        expect(F.eq(mRecovered.x, mExpected.x)).to.equal(true);
+        expect(F.eq(mRecovered.y, mExpected.y)).to.equal(true);
+    });
+    //     it("should fail for an invalid point", async () => {
+    //         const circuit = await circom_tester.wasm(CIRCUIT_PATH);
+    //         const invalidPk = {
+    //             x: "1234567890123456789012345678901234567890",
+    //             y: "9876543210987654321098765432109876543210"
+    //         };
+    //         const r = generateRandomScalar(251);
+    //         const ic0 = [F.random(), F.random()];
+    //         const ic1 = [F.random(), F.random()];
+    //         const input = {
+    //             ic0: ic0.map(x => babyjub.F.toObject(x)),
+    //             ic1: ic1.map(x => babyjub.F.toObject(x)),
+    //             r: BigInt(r),
+    //             pk: invalidPk
+    //         };
+    //         await expect(circuit.calculateWitness(input, true)).to.be.rejectedWith(Error, /Not enough values/);
+    //     });
+});
+function scalarMul(F, a, d, P, n) {
+    if (n === 0n) {
+        return { X: 0n, Y: 1n, Z: 1n }; // Нейтральный элемент
+    }
+    let R = { X: 0n, Y: 1n, Z: 1n }; // Нейтральный аккумулятор
+    let Q = { ...P }; // Копия P для итеративного удвоения
+    while (n > 0n) {
+        if (n & 1n) {
+            R = projectiveAdd(F, a, d, R, Q);
+        }
+        Q = projectiveAdd(F, a, d, Q, Q);
+        n >>= 1n;
+    }
+    return R;
+}
+function projectiveAdd(F, a, d, P1, P2) {
+    const { X: X1, Y: Y1, Z: Z1 } = P1;
+    const { X: X2, Y: Y2, Z: Z2 } = P2;
+    const A = F.mul(Z1, Z2); // A = Z1 * Z2
+    const B = F.square(A); // B = A^2
+    const C = F.mul(X1, X2); // C = X1 * X2
+    const D = F.mul(Y1, Y2); // D = Y1 * Y2
+    const E = F.mul(F.mul(d, C), D); // E = d * C * D
+    const F_ = F.sub(B, E); // F = B - E
+    const G = F.add(B, E); // G = B + E
+    const X1plusY1 = F.add(X1, Y1);
+    const X2plusY2 = F.add(X2, Y2);
+    const X1Y1_X2Y2 = F.mul(X1plusY1, X2plusY2); // (X1 + Y1)(X2 + Y2)
+    const CD = F.add(C, D); // C + D
+    const E_ = F.sub(X1Y1_X2Y2, CD); // E = (X1 + Y1)(X2 + Y2) - (C + D)
+    const X3 = F.mul(F.mul(A, F_), E_); // X3 = A * F * E
+    const Y3 = F.mul(F.mul(A, G), F.sub(D, F.mul(a, C))); // Y3 = A * G * (D - a * C)
+    const Z3 = F.mul(F_, G); // Z3 = F * G
+    return { X: X3, Y: Y3, Z: Z3 };
+}
+function isOnCurve(x, y) {
+    try {
+        // Проверка нейтрального элемента (0, 1)
+        if (x === 0n && y === 1n)
+            return true;
+        // Вычисление x² и y² в поле
+        x = F.normalize(x);
+        y = F.normalize(y);
+        const x2 = F.square(x);
+        const y2 = F.square(y);
+        // Левая часть уравнения: -5x² + y²
+        const lhs = F.add(F.mul(F.e(a), x2), y2);
+        // Правая часть уравнения: 1 + d*x²*y²
+        const x2y2 = F.mul(x2, y2);
+        const rhs = F.add(F.e(1n), F.mul(F.e(d), x2y2));
+        let lhs_norm = F.normalize(lhs);
+        let rhs_norm = F.normalize(rhs);
+        return F.eq(lhs_norm, rhs_norm);
+    }
+    catch (e) {
+        return false;
+    }
+}
+function randomFieldElement() {
+    const buffer = randomBytes(32);
+    const value = BigInt("0x" + buffer.toString("hex")) % q;
+    return value;
+}
+function generatePoint(F, a, d) {
+    while (true) {
+        const x = F.e(randomFieldElement());
+        const x2 = F.mul(x, x);
+        const denom = F.sub(F.e(1n), F.mul(F.e(d), x2));
+        if (F.isZero(denom))
+            continue;
+        const numer = F.add(F.mul(F.neg(F.e(a)), x2), F.e(1n));
+        const y2 = F.div(numer, denom);
+        const y = F.sqrt(y2);
+        if (y !== null) {
+            return {
+                x: F.toObject(x),
+                y: F.toObject(y)
+            };
+        }
+    }
+}

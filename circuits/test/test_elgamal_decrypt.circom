@@ -2,7 +2,7 @@ pragma circom 2.1.6;
 
 include "../common/elgamal.circom";
 
-template Decrypt() {
+template MainTestDecrypt() {
     var numBits = 128;
 
     signal input c0[3];
@@ -21,4 +21,4 @@ template Decrypt() {
     m[2] <== decrypt.m[2];
 }
 
-component main {public [c0]}  = Decrypt();
+component main = MainTestDecrypt();

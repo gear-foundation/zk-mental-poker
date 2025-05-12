@@ -32,3 +32,4 @@ template ecDecompress() {
     tmp[1] <== (s-1) * delta;
     y <== tmp[0] + tmp[1];
 }
+
