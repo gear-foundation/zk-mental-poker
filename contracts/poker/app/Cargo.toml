@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 sails-rs = "0.8.0"
 gstd = { version = "1.8.0", features = ["debug"] }
+gbuiltin-bls381 = "1.8.0"
+hex-literal = "0.4.1"

@@ -21,6 +21,19 @@ poker = { path = ".", features = ["wasm-binary"] }
 poker-client = { path = "client" }
 sails-rs = { version = "0.8.0", features = ["gtest"] }
 tokio = { version = "1.41", features = ["rt", "macros"] }
+gclient = "=1.8.0"
+hex-literal = "0.4.1"
+gear-core = "=1.8.0"
+ark-bls12-381 = "0.5.0"
+ark-ec = "0.5.0"
+ark-ff = "0.5.0"
+ark-scale = "=0.0.12"
+serde = "1.0.219"
+ark-serialize = "0.5.0"
+hex = "0.4.3"
+serde_json = "1.0.140"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
 
 [features]
 wasm-binary = []
