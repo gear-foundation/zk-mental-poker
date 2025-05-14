@@ -4,12 +4,14 @@ use sails_rs::gstd::debug;
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
 use utils::*;
+mod decrypt_vk_bytes;
 mod shuffle_vk_bytes;
 mod utils;
 mod verify;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
-    get_shuffle_prepared_inputs_bytes, shuffle_vk_from_consts, verify, verify_batch_shuffle,
+    decrypt_vk_from_consts, get_shuffle_prepared_inputs_bytes, shuffle_vk_from_consts, verify,
+    verify_batch_shuffle,
 };
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq)]
@@ -155,6 +157,8 @@ impl PokerService {
         active_participants.add(config.admin_id);
         let vk_shuffle_bytes = shuffle_vk_from_consts();
         let vk_shuffle = decode_verifying_key(&vk_shuffle_bytes);
+        let vk_decrypt_bytes = decrypt_vk_from_consts();
+        let vk_decrypt = decode_verifying_key(&vk_decrypt_bytes);
         unsafe {
             STORAGE = Some(Storage {
                 builtin_bls381_address: ActorId::from(ACTOR_ID),
@@ -167,7 +171,7 @@ impl PokerService {
                 bank: HashMap::new(),
                 all_in_players: Vec::new(),
                 already_invested_in_the_circle: HashMap::new(),
-                vk_decrypt: vk_shuffle.clone(),
+                vk_decrypt,
                 vk_shuffle,
                 encrypted_deck: None,
                 deck_position: 0,
@@ -244,6 +248,7 @@ impl PokerService {
         )
         .await;
     }
+
     pub async fn shuffle_deck(
         &mut self,
         encrypted_deck: Vec<EncryptedCard>,
@@ -260,6 +265,10 @@ impl PokerService {
         )
         .await;
         storage.status = Status::WaitingStart;
+        sails_rs::gstd::debug!(
+            "ENCRYPTED DECK LEN {:?}",
+            encrypted_deck.len()
+        );
         storage.encrypted_deck = Some(encrypted_deck);
     }
 
@@ -293,8 +302,12 @@ impl PokerService {
         let mut pos = storage.deck_position;
 
         let mut dealt = Vec::new();
-
+        sails_rs::gstd::debug!(
+            "DEAL ENCRYPTED DECK LEN {:?}",
+            deck.len()
+        );
         for id in storage.participants.keys() {
+
             if pos + 2 > deck.len() {
                 panic("Not enough cards in the deck");
             }
@@ -322,16 +335,12 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
 
-        verify_batch_shuffle(
-            &storage.vk_decrypt,
-            proofs,
-            storage.builtin_bls381_address,
-        )
-        .await;
+        verify_batch_shuffle(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
 
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
         }
+        sails_rs::gstd::debug!("DECRYPT GAS {:?}", sails_rs::gstd::exec::gas_available());
     }
     pub fn cancel_game(&mut self) {
         // TODO: add logic to return value player
@@ -564,13 +573,6 @@ impl PokerService {
                 debug!("TURN {:?}", betting.turn);
                 betting.current_bet = 0;
 
-                match stage {
-                    Stage::PreFlop => self.deal_table_cards(3),
-                    Stage::Flop => self.deal_table_cards(1),
-                    Stage::Turn => self.deal_table_cards(1),
-                    Stage::River => {}
-                }
-
                 *stage = stage.clone().next().unwrap();
                 self.emit_event(Event::NextStage(stage.clone()))
                     .expect("Event Invocation Error");
@@ -586,11 +588,11 @@ impl PokerService {
             .encrypted_deck
             .as_ref()
             .expect("Shuffled deck is not initialized");
-    
+
         if storage.deck_position + count > deck.len() {
             panic("Not enough cards in the deck");
         }
-    
+
         let mut new_cards = Vec::new();
         for _ in 0..count {
             let card = deck[storage.deck_position].clone();
@@ -598,12 +600,11 @@ impl PokerService {
             new_cards.push(card);
             storage.deck_position += 1;
         }
-    
+
         self.emit_event(Event::CardsDealtToTable(new_cards))
             .expect("Event Invocation Error");
     }
 
-    
     pub fn card_disclosure(
         &mut self,
         id_to_cards: Vec<(ActorId, (Card, Card))>,
@@ -656,7 +657,7 @@ impl PokerService {
         proofs: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
-    
+
         let already_revealed = storage.revealed_table_cards.len();
         let expected_stage_count = match already_revealed {
             0 => 3, // Flop
@@ -664,27 +665,25 @@ impl PokerService {
             4 => 1, // River
             _ => panic("All table cards already revealed"),
         };
-    
+
         if new_cards.len() != expected_stage_count {
             panic("Incorrect number of cards for current stage");
         }
-    
+
         if storage.table_cards.len() != 5 {
             panic("Encrypted table cards not set");
         }
-    
-        verify_batch_shuffle(
-            &storage.vk_decrypt,
-            proofs,
-            storage.builtin_bls381_address,
-        )
-        .await;
-    
+
+        verify_batch_shuffle(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
+
         storage.revealed_table_cards.extend(new_cards.clone());
     }
-    
 
     // Query
+    pub fn player_cards(&self, player_id: ActorId) -> Option<[EncryptedCard; 2]> {
+        self.get().encrypted_cards.get(&player_id).cloned()
+    }
+
     pub fn participants(&self) -> Vec<(ActorId, Participant)> {
         self.get().participants.clone().into_iter().collect()
     }

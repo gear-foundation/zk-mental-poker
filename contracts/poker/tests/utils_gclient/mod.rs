@@ -2,8 +2,17 @@ use gclient::GearApi;
 use gear_core::ids::{MessageId, ProgramId};
 use poker_client::{Card, Config, PublicKey, Status, Suit, traits::*};
 use sails_rs::{ActorId, Encode};
-
-pub const USERS_STR: &[&str] = &["//John", "//Mike", "//Dan"];
+pub mod zk_loader;
+pub const USERS_STR: &[&str] = &[
+    "//John",
+    "//Mike",
+    "//Dan",
+    "//Alica",
+    "//Bob",
+    "//Charlie",
+    "//Sam",
+    "//Jake",
+];
 
 pub trait ApiUtils {
     fn get_actor_id(&self) -> ActorId;
@@ -48,12 +57,7 @@ pub async fn get_new_client(api: &GearApi, name: &str) -> GearApi {
     api.clone().with(name).expect("Unable to change signer.")
 }
 
-pub async fn init(api: &GearApi) -> (MessageId, ProgramId) {
-    let pk = PublicKey {
-        x: hex_literal::hex!("35069afb8cf367e788fa974442b9c8c926d7fcd696a7404f3280625267825277"),
-        y: hex_literal::hex!("6f3cccfe59a9d26a6630e684285e5d110bc6eda345e0bc663ed31529b72e0bd0"),
-        z: hex_literal::hex!("569a7069fe29e02bb6b32f03f5b8da85a750e1df576c045254d664a7c6bd42b5"),
-    };
+pub async fn init(api: &GearApi, pk: PublicKey) -> (MessageId, ProgramId) {
     let config = Config {
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),

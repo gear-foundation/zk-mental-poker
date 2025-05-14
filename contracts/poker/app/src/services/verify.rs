@@ -1,10 +1,10 @@
-use crate::services::shuffle_vk_bytes;
+use crate::services::{decrypt_vk_bytes, shuffle_vk_bytes};
 use core::ops::AddAssign;
 use gbuiltin_bls381::{
     Request, Response,
     ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective as G1, G2Affine},
     ark_ec::{AffineRepr, Group, pairing::Pairing},
-    ark_ff::PrimeField,
+    ark_ff::{Field, PrimeField},
     ark_scale,
     ark_scale::hazmat::ArkScaleProjective,
     ark_serialize::{CanonicalDeserialize, CanonicalSerialize},
@@ -29,6 +29,18 @@ pub fn shuffle_vk_from_consts() -> VerifyingKeyBytes {
         gamma_g2_neg_pc: shuffle_vk_bytes::VK_GAMMA_G2_NEG_PC.to_vec(),
         delta_g2_neg_pc: shuffle_vk_bytes::VK_DELTA_G2_NEG_PC.to_vec(),
         ic: shuffle_vk_bytes::VK_IC
+            .iter()
+            .map(|row| row.to_vec())
+            .collect(),
+    }
+}
+
+pub fn decrypt_vk_from_consts() -> VerifyingKeyBytes {
+    VerifyingKeyBytes {
+        alpha_g1_beta_g2: decrypt_vk_bytes::VK_ALPHA_G1_BETA_G2.to_vec(),
+        gamma_g2_neg_pc: decrypt_vk_bytes::VK_GAMMA_G2_NEG_PC.to_vec(),
+        delta_g2_neg_pc: decrypt_vk_bytes::VK_DELTA_G2_NEG_PC.to_vec(),
+        ic: decrypt_vk_bytes::VK_IC
             .iter()
             .map(|row| row.to_vec())
             .collect(),
@@ -108,24 +120,68 @@ pub async fn verify_batch_shuffle(
     instances: Vec<VerificationVariables>,
     builtin_bls381_address: ActorId,
 ) {
+    let mut a_points = Vec::with_capacity(3 * instances.len());
+    let mut b_points = Vec::with_capacity(3 * instances.len());
+
+    let len = instances.len();
+
     for instance in instances {
         let VerificationVariables {
             proof_bytes,
             public_input,
         } = instance;
-        let prepared_input_bytes =
+
+        let prepared_inputs =
             get_shuffle_prepared_inputs_bytes(public_input, vk.ic.clone(), builtin_bls381_address)
                 .await;
+        let a = G1Affine::deserialize_uncompressed_unchecked(&*proof_bytes.a)
+            .expect("Deserialize error");
+        let b = G2Affine::deserialize_uncompressed_unchecked(&*proof_bytes.b)
+            .expect("Deserialize error");
+        let c = G1Affine::deserialize_uncompressed_unchecked(&*proof_bytes.c)
+            .expect("Deserialize error");
 
-        verify(
-            vk,
-            proof_bytes,
-            prepared_input_bytes,
-            builtin_bls381_address,
-        )
-        .await;
+        a_points.extend([a, prepared_inputs, c]);
+        b_points.extend([b, vk.gamma_g2_neg_pc, vk.delta_g2_neg_pc]);
+    }
+
+    let a: ArkScale<Vec<G1Affine>> = a_points.into();
+    let b: ArkScale<Vec<G2Affine>> = b_points.into();
+    let miller_out =
+        calculate_multi_miller_loop(a.encode(), b.encode(), builtin_bls381_address).await;
+
+    let exp = calculate_exponentiation(miller_out, builtin_bls381_address).await;
+
+    let expected = vk.alpha_g1_beta_g2.0.pow([len as u64]);
+
+    if exp.0 != expected {
+        ext::panic("Batch verification failed");
     }
 }
+
+// pub async fn verify_batch_shuffle(
+//     vk: &VerifyingKey,
+//     instances: Vec<VerificationVariables>,
+//     builtin_bls381_address: ActorId,
+// ) {
+//     for instance in instances {
+//         let VerificationVariables {
+//             proof_bytes,
+//             public_input,
+//         } = instance;
+//         let prepared_input_bytes =
+//             get_shuffle_prepared_inputs_bytes(public_input, vk.ic.clone(), builtin_bls381_address)
+//                 .await;
+
+//         verify(
+//             vk,
+//             proof_bytes,
+//             prepared_input_bytes,
+//             builtin_bls381_address,
+//         )
+//         .await;
+//     }
+// }
 
 pub async fn verify(
     vk: &VerifyingKey,
@@ -144,7 +200,10 @@ pub async fn verify(
     let miller_out =
         calculate_multi_miller_loop(a.encode(), b.encode(), builtin_bls381_address).await;
 
+    sails_rs::gstd::debug!("GAS BEFORE EXP {:?}", sails_rs::gstd::exec::gas_available());
+
     let exp = calculate_exponentiation(miller_out, builtin_bls381_address).await;
+    sails_rs::gstd::debug!("GAS AFTER EXP {:?}", sails_rs::gstd::exec::gas_available());
 
     if exp != vk.alpha_g1_beta_g2 {
         ext::panic("Verification failed");
