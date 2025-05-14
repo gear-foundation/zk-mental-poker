@@ -85,8 +85,9 @@ async fn test_basic_function() -> Result<()> {
         load_encrypted_table_cards("/Users/luisa/zk-shuffle-runner/output/encrypted_deck.json");
 
     println!("Deck {:?}", deck.len());
-    let decrypt_proofs =
-        load_partial_decrypt_proofs("/Users/luisa/zk-shuffle-runner/output/partial_decrypt_proofs.json");
+    let decrypt_proofs = load_partial_decrypt_proofs(
+        "/Users/luisa/zk-shuffle-runner/output/partial_decrypt_proofs.json",
+    );
     let pk_cards =
         load_partial_decryptions("/Users/luisa/zk-shuffle-runner/output/partial_decryptions.json");
     let mut pk_to_actor_id: Vec<(PublicKey, ActorId)> = vec![];

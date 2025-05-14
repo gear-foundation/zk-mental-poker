@@ -265,10 +265,7 @@ impl PokerService {
         )
         .await;
         storage.status = Status::WaitingStart;
-        sails_rs::gstd::debug!(
-            "ENCRYPTED DECK LEN {:?}",
-            encrypted_deck.len()
-        );
+        sails_rs::gstd::debug!("ENCRYPTED DECK LEN {:?}", encrypted_deck.len());
         storage.encrypted_deck = Some(encrypted_deck);
     }
 
@@ -302,12 +299,8 @@ impl PokerService {
         let mut pos = storage.deck_position;
 
         let mut dealt = Vec::new();
-        sails_rs::gstd::debug!(
-            "DEAL ENCRYPTED DECK LEN {:?}",
-            deck.len()
-        );
+        sails_rs::gstd::debug!("DEAL ENCRYPTED DECK LEN {:?}", deck.len());
         for id in storage.participants.keys() {
-
             if pos + 2 > deck.len() {
                 panic("Not enough cards in the deck");
             }
@@ -432,7 +425,10 @@ impl PokerService {
             panic("Wrong status");
         };
 
-        if matches!(stage, Stage::WaitingTableCardsToBeDecrypted{ .. }) {
+        if *stage == Stage::WaitingTableCardsAfterPreFlop
+            || *stage == Stage::WaitingTableCardsAfterFlop
+            || *stage == Stage::WaitingTableCardsAfterTurn
+        {
             panic("Stage is waiting table cards to be decrypted");
         }
 

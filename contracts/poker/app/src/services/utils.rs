@@ -112,29 +112,24 @@ pub struct BettingStage {
 #[scale_info(crate = sails_rs::scale_info)]
 pub enum Stage {
     PreFlop,
+    WaitingTableCardsAfterPreFlop,
     Flop,
+    WaitingTableCardsAfterFlop,
     Turn,
+    WaitingTableCardsAfterTurn,
     River,
-    WaitingTableCardsToBeDecrypted { after: Box<Stage>, count: u8 },
 }
 
 impl Stage {
     pub fn next(self) -> Option<Stage> {
         match self {
-            Stage::PreFlop => Some(Stage::WaitingTableCardsToBeDecrypted {
-                after: Box::new(Stage::Flop),
-                count: 3,
-            }),
-            Stage::Flop => Some(Stage::WaitingTableCardsToBeDecrypted {
-                after: Box::new(Stage::Turn),
-                count: 1,
-            }),
-            Stage::Turn => Some(Stage::WaitingTableCardsToBeDecrypted {
-                after: Box::new(Stage::River),
-                count: 1,
-            }),
+            Stage::PreFlop => Some(Stage::WaitingTableCardsAfterPreFlop),
+            Stage::WaitingTableCardsAfterPreFlop => Some(Stage::Flop),
+            Stage::Flop => Some(Stage::WaitingTableCardsAfterFlop),
+            Stage::WaitingTableCardsAfterFlop => Some(Stage::Turn),
+            Stage::Turn => Some(Stage::WaitingTableCardsAfterTurn),
+            Stage::WaitingTableCardsAfterTurn => Some(Stage::River),
             Stage::River => None,
-            Stage::WaitingTableCardsToBeDecrypted { after, .. } => Some(*after),
         }
     }
 }
