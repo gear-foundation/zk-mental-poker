@@ -432,6 +432,10 @@ impl PokerService {
             panic("Wrong status");
         };
 
+        if matches!(stage, Stage::WaitingTableCardsToBeDecrypted{ .. }) {
+            panic("Stage is waiting table cards to be decrypted");
+        }
+
         let betting = storage.betting.as_mut().expect("Betting must exist");
 
         if betting.turn != player {
