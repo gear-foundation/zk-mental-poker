@@ -8,6 +8,7 @@ mod decrypt_vk_bytes;
 mod shuffle_vk_bytes;
 mod utils;
 mod verify;
+mod curve;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
     decrypt_vk_from_consts, get_shuffle_prepared_inputs_bytes, shuffle_vk_from_consts, verify,
@@ -333,8 +334,28 @@ impl PokerService {
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
         }
-        sails_rs::gstd::debug!("DECRYPT GAS {:?}", sails_rs::gstd::exec::gas_available());
     }
+
+    pub async fn submit_table_partial_decryptions(
+        &mut self,
+        partials: Vec<[Vec<u8>; 3]>,
+        proofs: Vec<VerificationVariables>,
+    ) {
+        let storage = self.get_mut();
+        let sender = msg::source();
+
+        let stage = match &storage.status {
+            Status::Play { stage } => stage.clone(),
+            _ => panic("Wrong status: must be in Play"),
+        };
+        
+        let (base_index, expected_count) = match stage {
+            Stage::PreFlop => (0, 3),
+            Stage::Turn => (3, 1),
+            Stage::River => (4, 1),
+        };
+    }
+
     pub fn cancel_game(&mut self) {
         // TODO: add logic to return value player
         let storage = self.get_mut();

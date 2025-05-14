@@ -3,6 +3,7 @@ use gstd::{debug, ext, format, msg};
 use sails_rs::collections::HashMap;
 use sails_rs::prelude::*;
 use sails_rs::{ActorId, Vec};
+use gbuiltin_bls381::ark_ff::Field;
 
 pub fn panic(err: impl Debug) -> ! {
     ext::panic_bytes(format!("{err:?}").as_bytes())
