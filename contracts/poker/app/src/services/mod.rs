@@ -1,7 +1,6 @@
 #![allow(static_mut_refs)]
 use sails_rs::collections::HashMap;
-use sails_rs::gstd::debug;
-use sails_rs::gstd::msg;
+use sails_rs::gstd::{exec, debug, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
@@ -15,6 +14,8 @@ pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
     get_prepared_inputs_bytes, verify_batch,
 };
+use pts_client::pts::io as pts_io;
+
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
@@ -46,10 +47,11 @@ struct Storage {
     config: Config,
     round: u128,
     betting: Option<BettingStage>,
-    bank: HashMap<ActorId, u128>,
+    betting_bank: HashMap<ActorId, u128>,
     all_in_players: Vec<ActorId>,
     already_invested_in_the_circle: HashMap<ActorId, u128>, // The mapa is needed to keep track of how much a person has put on the table,
                                                             // which can change after each player's turn
+    pts_actor_id: ActorId,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -78,7 +80,7 @@ pub enum Status {
 pub enum Action {
     Fold,
     Call,
-    Raise,
+    Raise { bet: u128 },
     Check,
     AllIn,
 }
@@ -93,6 +95,7 @@ pub struct Config {
     small_blind: u128,
     big_blind: u128,
     number_of_participants: u16,
+    starting_bank: u128,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -100,6 +103,7 @@ pub struct Config {
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct Participant {
     name: String,
+    balance: u128,
     card_1: Option<u32>,
     card_2: Option<u32>,
     pk: PublicKey,
@@ -134,7 +138,6 @@ pub enum Event {
     BigBlindIsSet,
     TurnIsMade {
         action: Action,
-        value: u128,
     },
     NextStage(Stage),
     Finished {
@@ -146,12 +149,21 @@ pub enum Event {
 pub struct PokerService(());
 
 impl PokerService {
-    pub fn init(config: Config, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
+    pub async fn init(config: Config, pts_actor_id: ActorId, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
+
+        let request = pts_io::Transfer::encode_call(config.admin_id, exec::program_id(), config.starting_bank);
+
+        msg::send_bytes_for_reply(pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error transfer points to contract");
+
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
             Participant {
                 name: config.admin_name.clone(),
+                balance: config.starting_bank,
                 card_1: None,
                 card_2: None,
                 pk,
@@ -170,7 +182,7 @@ impl PokerService {
                 active_participants,
                 round: 0,
                 betting: None,
-                bank: HashMap::new(),
+                betting_bank: HashMap::new(),
                 all_in_players: Vec::new(),
                 already_invested_in_the_circle: HashMap::new(),
                 vk_decrypt,
@@ -183,6 +195,7 @@ impl PokerService {
                 revealed_table_cards: Vec::new(),
                 original_card_map: init_deck_and_card_map(),
                 partial_table_card_decryptions: HashMap::new(),
+                pts_actor_id,
             });
         }
         Self(())
@@ -201,7 +214,7 @@ impl PokerService {
         Self(())
     }
 
-    pub fn register(&mut self, player_name: String, pk: PublicKey) {
+    pub async fn register(&mut self, player_name: String, pk: PublicKey) {
         let storage = self.get_mut();
         if storage.status != Status::Registration {
             panic("Wrong status");
@@ -210,11 +223,18 @@ impl PokerService {
         if storage.participants.contains_key(&msg_src) {
             panic("Already registered");
         }
+        let request = pts_io::Transfer::encode_call(msg_src, exec::program_id(), storage.config.starting_bank);
+
+        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error transfer points to contract");
 
         storage.participants.insert(
             msg_src,
             Participant {
                 name: player_name,
+                balance: storage.config.starting_bank,
                 card_1: None,
                 card_2: None,
                 pk: pk.clone(),
@@ -417,20 +437,28 @@ impl PokerService {
     pub fn set_small_blind(&mut self) {
         let storage = self.get_mut();
         let player = msg::source();
-        let value = msg::value();
 
         if let Status::WaitingSetSmallBlind(id) = storage.status {
             if player != id {
                 panic("Access denied");
             }
-            if value != storage.config.small_blind {
-                panic("Wrong value");
-            }
         } else {
             panic("Wrong status");
         }
-        storage.already_invested_in_the_circle.insert(player, value);
-        storage.bank.insert(player, value);
+
+        let participant = storage.participants.get_mut(&player).unwrap();
+        if participant.balance <= storage.config.small_blind {
+            storage.active_participants.remove(&player);
+            storage.all_in_players.push(player);
+            storage.already_invested_in_the_circle.insert(player, participant.balance);
+            storage.betting_bank.insert(player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage.already_invested_in_the_circle.insert(player, storage.config.small_blind);
+            storage.betting_bank.insert(player, storage.config.small_blind);
+            participant.balance -= storage.config.small_blind;
+        }
+
         storage.status = Status::WaitingSetBigBlind(
             storage
                 .active_participants
@@ -444,22 +472,28 @@ impl PokerService {
     pub fn set_big_blind(&mut self) {
         let storage = self.get_mut();
         let player = msg::source();
-        let value = msg::value();
 
         let big_blind_id = if let Status::WaitingSetBigBlind(id) = storage.status {
             if player != id {
                 panic("Access denied");
             }
-            if value != storage.config.big_blind {
-                panic("Wrong value");
-            }
             id
         } else {
             panic("Wrong status");
         };
+        let participant = storage.participants.get_mut(&player).unwrap();
 
-        storage.already_invested_in_the_circle.insert(player, value);
-        storage.bank.insert(player, value);
+        if participant.balance <= storage.config.big_blind {
+            storage.active_participants.remove(&player);
+            storage.all_in_players.push(player);
+            storage.already_invested_in_the_circle.insert(player, participant.balance);
+            storage.betting_bank.insert(player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage.already_invested_in_the_circle.insert(player, storage.config.big_blind);
+            storage.betting_bank.insert(player, storage.config.big_blind);
+            participant.balance -= storage.config.big_blind;
+        }
 
         storage.status = Status::Play {
             stage: Stage::PreFlop,
@@ -478,7 +512,6 @@ impl PokerService {
 
     pub fn turn(&mut self, action: Action) {
         let player = msg::source();
-        let value = msg::value();
         let storage = self.get_mut();
 
         let Status::Play { stage } = &mut storage.status else {
@@ -502,6 +535,7 @@ impl PokerService {
             );
             panic("Not your turn");
         }
+        let participant = storage.participants.get_mut(&player).unwrap();
 
         // Process the player's action
         match action {
@@ -514,20 +548,22 @@ impl PokerService {
                     .get(&player)
                     .unwrap_or(&0);
                 debug!("CALL {:?}", already_invested);
-                if already_invested + value != betting.current_bet {
-                    panic("Wrong call value");
+                let call_value = betting.current_bet - already_invested;
+                if participant.balance <= call_value {
+                    panic("Wrong action");
                 }
+                participant.balance -= call_value;
                 betting.acted_players.push(player);
                 storage
                     .already_invested_in_the_circle
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += call_value)
+                    .or_insert(call_value);
                 storage
-                    .bank
+                    .betting_bank
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += call_value)
+                    .or_insert(call_value);
             }
             Action::Check => {
                 debug!("HERE {:?}", betting.current_bet);
@@ -540,15 +576,20 @@ impl PokerService {
                 }
                 betting.acted_players.push(player);
             }
-            Action::Raise => {
+            Action::Raise {bet} => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
-                if already_invested + value <= betting.current_bet {
+
+                if participant.balance <= bet {
+                    panic("Wrong action");
+                }
+                if already_invested + bet <= betting.current_bet {
                     panic("Raise must be higher");
                 }
-                betting.current_bet = value;
+                betting.current_bet = already_invested + bet;
+                participant.balance -= bet;
                 // if someone raises the bet, the betting round starts all over again
                 // so it is necessary to clear the acted_players
                 betting.acted_players.clear();
@@ -556,36 +597,39 @@ impl PokerService {
                 storage
                     .already_invested_in_the_circle
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += bet)
+                    .or_insert(bet);
                 storage
-                    .bank
+                    .betting_bank
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += bet)
+                    .or_insert(bet);
             }
             Action::AllIn => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
-                if already_invested + value > betting.current_bet {
-                    betting.current_bet = value;
+                let bet = already_invested + participant.balance;
+                if bet > betting.current_bet {
+                    betting.current_bet = bet;
                     betting.acted_players.clear();
                 }
+
                 storage.all_in_players.push(player);
                 // if a player has made a all in, we remove him from the active_participants, so that he no longer participates in bets
                 storage.active_participants.remove(&player);
                 storage
                     .already_invested_in_the_circle
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += participant.balance)
+                    .or_insert(participant.balance);
                 storage
-                    .bank
+                    .betting_bank
                     .entry(player)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
+                    .and_modify(|v| *v += participant.balance)
+                    .or_insert(participant.balance);
+                participant.balance = 0;
             }
         }
         debug!("BEFORE TURN {:?}", betting.turn);
@@ -608,11 +652,14 @@ impl PokerService {
                     .get(0)
                     .expect("The player must exist")
             };
+            let prize = storage.betting_bank.values().sum();
+            let participant = storage.participants.get_mut(winner).unwrap();
+            participant.balance = prize;
             storage.status = Status::Finished {
                 winners: vec![*winner],
-                cash_prize: vec![storage.bank.values().sum()],
+                cash_prize: vec![prize],
             };
-            //self.emit_event(Event::Finished { winners: vec![*winner], cash_prize: vec![*bank] }).expect("Event Invocation Error");
+            //self.emit_event(Event::Finished { winners: vec![*winner], cash_prize: vec![*betting_bank] }).expect("Event Invocation Error");
         }
         // Check if the round is complete at the River stage
         else if betting.acted_players.len() == storage.active_participants.len()
@@ -639,7 +686,7 @@ impl PokerService {
                     .expect("Event Invocation Error");
             }
         }
-        self.emit_event(Event::TurnIsMade { action, value })
+        self.emit_event(Event::TurnIsMade { action })
             .expect("Event Invocation Error");
     }
 
@@ -700,7 +747,13 @@ impl PokerService {
         };
 
         let hands = id_to_cards.into_iter().collect();
-        let (winners, cash_prize) = evaluate_round(hands, table_cards, &storage.bank);
+        let (winners, cash_prize) = evaluate_round(hands, table_cards, &storage.betting_bank);
+
+        for (winner, prize) in winners.iter().zip(cash_prize.clone()) {
+            let participant = storage.participants.get_mut(winner).unwrap();
+            participant.balance = prize;
+        }
+
         storage.status = Status::Finished {
             winners: winners.clone(),
             cash_prize: cash_prize.clone(),
@@ -763,8 +816,8 @@ impl PokerService {
     pub fn betting(&self) -> &'static Option<BettingStage> {
         &self.get().betting
     }
-    pub fn bank(&self) -> Vec<(ActorId, u128)> {
-        self.get().bank.clone().into_iter().collect()
+    pub fn betting_bank(&self) -> Vec<(ActorId, u128)> {
+        self.get().betting_bank.clone().into_iter().collect()
     }
     pub fn all_in_players(&self) -> &'static Vec<ActorId> {
         &self.get().all_in_players

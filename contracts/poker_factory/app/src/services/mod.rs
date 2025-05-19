@@ -11,6 +11,7 @@ struct Storage {
     lobbies: HashMap<ActorId, LobbyConfig>,
     admins: HashSet<ActorId>,
     config: Config,
+    pts_actor_id: ActorId,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub struct LobbyConfig {
     small_blind: u128,
     big_blind: u128,
     number_of_participants: u16,
+    starting_bank: u128,
 }
 
 static mut STORAGE: Option<Storage> = None;
@@ -53,12 +55,13 @@ pub enum Event {
 pub struct PokerFactoryService(());
 
 impl PokerFactoryService {
-    pub fn init(config: Config) -> Self {
+    pub fn init(config: Config, pts_actor_id: ActorId) -> Self {
         unsafe {
             STORAGE = Some(Storage {
                 admins: HashSet::from([msg::source()]),
                 config,
                 lobbies: HashMap::new(),
+                pts_actor_id,
             });
         }
         Self(())
@@ -77,7 +80,6 @@ impl PokerFactoryService {
         Self(())
     }
 
-    // Service's method (command)
     pub async fn create_lobby(&mut self, init_lobby: LobbyConfig) {
         let storage = self.get_mut();
         let msg_src = msg::source();
@@ -119,8 +121,7 @@ impl PokerFactoryService {
         }).expect("Notification Error");
     }
 
-    // Service's query
-    pub fn get_something(&self) -> String {
-        "Hello from PokerFactory!".to_string()
+    pub fn pts_actor_id(&self) -> ActorId {
+        self.get().pts_actor_id
     }    
 }

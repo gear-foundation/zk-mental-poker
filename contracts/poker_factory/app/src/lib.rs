@@ -3,13 +3,14 @@
 #![allow(static_mut_refs)]
 mod services;
 use crate::services::{Config, PokerFactoryService};
+use sails_rs::ActorId;
 
 pub struct PokerFactoryProgram(());
 
 #[sails_rs::program]
 impl PokerFactoryProgram {
-    pub fn new(config: Config) -> Self {
-        PokerFactoryService::init(config);
+    pub fn new(config: Config, pts_actor_id: ActorId) -> Self {
+        PokerFactoryService::init(config, pts_actor_id);
         Self(())
     }
 
