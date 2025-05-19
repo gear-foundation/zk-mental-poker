@@ -3,6 +3,7 @@ use gear_core::ids::{MessageId, ProgramId};
 use poker_client::{Card, Config, PublicKey, Status, Suit, traits::*};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
+use zk_loader::get_vkey;
 pub const USERS_STR: &[&str] = &[
     "//John",
     "//Mike",
@@ -42,7 +43,7 @@ pub async fn get_new_client(api: &GearApi, name: &str) -> GearApi {
         .total_balance(api.account_id())
         .await
         .expect("Error total balance");
-    let amount = alice_balance / 5;
+    let amount = alice_balance / 100;
     api.transfer_keep_alive(
         api.get_specific_actor_id(name)
             .encode()
@@ -62,11 +63,13 @@ pub async fn init(api: &GearApi, pk: PublicKey) -> (MessageId, ProgramId) {
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),
         lobby_name: "Lobby".to_string(),
-        small_blind: 100,
-        big_blind: 1000,
+        small_blind: 10,
+        big_blind: 100,
         number_of_participants: 3,
     };
-    let constructor = (config, pk);
+    let shuffle_vkey = get_vkey("/Users/luisa/zk-shuffle-runner/output/shuffle_vkey.json");
+    let decrypt_vkey = get_vkey("/Users/luisa/zk-shuffle-runner/output/decrypt_vkey.json");
+    let constructor = (config, pk, shuffle_vkey, decrypt_vkey);
     let request = ["New".encode(), constructor.encode()].concat();
 
     let path = "./target/wasm32-gear/release/poker.opt.wasm";

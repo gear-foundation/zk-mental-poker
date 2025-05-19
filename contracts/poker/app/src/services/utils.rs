@@ -1,10 +1,10 @@
 use core::fmt::Debug;
+use gbuiltin_bls381::ark_ff::Field;
 use gstd::{debug, ext, format, msg};
 use sails_rs::collections::HashMap;
+use sails_rs::collections::HashSet;
 use sails_rs::prelude::*;
 use sails_rs::{ActorId, Vec};
-use gbuiltin_bls381::ark_ff::Field;
-
 pub fn panic(err: impl Debug) -> ! {
     ext::panic_bytes(format!("{err:?}").as_bytes())
 }
@@ -17,6 +17,22 @@ pub struct TurnManager<Id> {
     turn_index: u64,
 }
 
+type PartialDecryption = [Vec<u8>; 3];
+#[derive(Default, Debug)]
+pub struct PartialDecryptionsByCard {
+    pub partials: Vec<PartialDecryption>,
+    pub participants: HashSet<ActorId>,
+}
+
+impl PartialDecryptionsByCard {
+    pub fn add(&mut self, actor: ActorId, decryption: PartialDecryption) {
+        if self.participants.contains(&actor) {
+            panic!("Already send decryption for this card");
+        }
+        self.partials.push(decryption);
+        self.participants.insert(actor);
+    }
+}
 impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     pub fn new() -> Self {
         Self {
@@ -138,7 +154,7 @@ impl Stage {
 #[derive(Debug, Clone, Hash, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
-enum Suit {
+pub enum Suit {
     Spades,   // ♠
     Hearts,   // ♥
     Diamonds, // ♦
@@ -149,12 +165,12 @@ enum Suit {
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct Card {
-    value: u8, // 2–14 (where 11-J, 12-Q, 13-K, 14-A)
-    suit: Suit,
+    pub value: u8, // 2–14 (where 11-J, 12-Q, 13-K, 14-A)
+    pub suit: Suit,
 }
 
 impl Card {
-    fn new(suit: Suit, value: u8) -> Self {
+    pub fn new(suit: Suit, value: u8) -> Self {
         Card { suit, value }
     }
 }

@@ -17,14 +17,15 @@ use ark_serialize::CanonicalSerialize;
 use core::ops::AddAssign;
 use num_bigint::BigUint;
 use num_traits::Num;
-use poker_client::{EncryptedCard, ProofBytes, PublicKey, VerificationVariables, traits::*};
+use poker_client::{EncryptedCard, VerifyingKeyBytes, ProofBytes, PublicKey, VerificationVariables, traits::*};
 use sails_rs::collections::HashMap;
 use serde::Deserialize;
 use std::fs;
 use std::ops::Neg;
 use std::str::FromStr;
 use utils_gclient::*;
-
+use std::fs::File;
+use std::io::Write;
 fn prepare_inputs(gamma_abc_g1: &[G1Affine], public_inputs: &[Fr]) -> Vec<u8> {
     if public_inputs.len() + 1 != gamma_abc_g1.len() {
         panic!(
@@ -84,7 +85,6 @@ async fn test_basic_function() -> Result<()> {
     let deck =
         load_encrypted_table_cards("/Users/luisa/zk-shuffle-runner/output/encrypted_deck.json");
 
-    println!("Deck {:?}", deck.len());
     let decrypt_proofs = load_partial_decrypt_proofs(
         "/Users/luisa/zk-shuffle-runner/output/partial_decrypt_proofs.json",
     );
@@ -143,63 +143,31 @@ async fn test_basic_function() -> Result<()> {
     println!("DECRYPT");
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (cards_by_actor, decrypt_proofs));
 
-    // let json =
-    //     fs::read_to_string("/Users/luisa/zk-shuffle-runner/output/decrypt_vkey.json").unwrap();
-    // let vkey: VKey = serde_json::from_str(&json).unwrap();
+    println!("SET SMALL BLIND");
+    let api = api.clone().with("//Alice").expect("Unable to change signer.");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SetSmallBlind", payload: (), value: 10_000_000_000_000);
 
-    // let alpha = deserialize_g1(&vkey.vk_alpha_1);
-    // let mut buf = Vec::new();
-    // alpha.serialize_compressed(&mut buf).unwrap();
+    let api = api.clone().with(USERS_STR[0]).expect("Unable to change signer.");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SetSmallBlind", payload: (), value: 10_000_000_000_000);
 
-    // let beta = deserialize_g2(&(vkey.vk_beta_2.to_vec())).unwrap();
-    // let gamma = deserialize_g2(&vkey.vk_gamma_2).unwrap();
-    // let delta = deserialize_g2(&vkey.vk_delta_2).unwrap();
+    let api = api.clone().with(USERS_STR[1]).expect("Unable to change signer.");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SetSmallBlind", payload: (), value: 10_000_000_000_000);
 
-    // // IC: Vec<G1Affine> from [String; 3]
-    // let ic_points: Vec<G1Affine> = vkey.IC.iter().map(|p| deserialize_g1(p)).collect();
 
-    // // pairing(alpha, beta)
-    // let alpha_g1_beta_g2 = Bls12_381::pairing(alpha, beta).0;
+    println!("SET BIG BLIND");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SetBigBlind", payload: (), value: 100_000_000_000_000);
 
-    // let mut alpha_beta_bytes = Vec::new();
-    // alpha_g1_beta_g2
-    //     .serialize_uncompressed(&mut alpha_beta_bytes)
-    //     .unwrap();
+    // let prepared_inputs_bytes = prepare_inputs(&ic_points, &public_inputs);
+    // let prepared_inputs = G1Affine::deserialize_uncompressed_unchecked(&*prepared_inputs_bytes)
+    //     .expect("Deserialize error");
 
-    // let gamma_g2_neg_pc = gamma.into_group().neg().into_affine();
-    // let delta_g2_neg_pc = delta.into_group().neg().into_affine();
-
-    // let mut gamma_neg_bytes = Vec::new();
-    // gamma_g2_neg_pc
-    //     .serialize_uncompressed(&mut gamma_neg_bytes)
-    //     .unwrap();
-
-    // let mut delta_neg_bytes = Vec::new();
-    // delta_g2_neg_pc
-    //     .serialize_uncompressed(&mut delta_neg_bytes)
-    //     .unwrap();
-
-    // let mut ic_compressed: Vec<Vec<u8>> = vec![];
-
-    // for ic in ic_points.clone() {
-    //     let mut buf = Vec::new();
-    //     ic.serialize_uncompressed(&mut buf).unwrap();
-    //     assert_eq!(buf.len(), 96);
-    //     ic_compressed.push(buf);
-    // }
-    //     let (proof, public_inputs) = load_proof_and_inputs("/Users/luisa/zk-shuffle-runner/proof.json");
-
-    //     let prepared_inputs_bytes = prepare_inputs(&ic_points, &public_inputs);
-    //     let prepared_inputs = G1Affine::deserialize_uncompressed_unchecked(&*prepared_inputs_bytes)
-    //         .expect("Deserialize error");
-
-    //     let a_prep = <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(proof.a);
-    //     let b_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(proof.b);
-    //     let c_prep = <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(proof.c);
-    //     let prepared_inputs_prep =
-    //         <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(prepared_inputs);
-    //     let gamma_neg_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(gamma_g2_neg_pc);
-    //     let delta_neg_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(delta_g2_neg_pc);
+    // let a_prep = <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(proof.a);
+    // let b_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(proof.b);
+    // let c_prep = <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(proof.c);
+    // let prepared_inputs_prep =
+   //     <ark_ec::bls12::G1Prepared<ark_bls12_381::Config>>::from(prepared_inputs);
+    // let gamma_neg_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(gamma_g2_neg_pc);
+    // let delta_neg_prep = <ark_ec::bls12::G2Prepared<ark_bls12_381::Config>>::from(delta_g2_neg_pc);
 
     // let mut output = String::new();
     // output.push_str(&format_bytes_array_const(
@@ -216,8 +184,20 @@ async fn test_basic_function() -> Result<()> {
     // ));
     // output.push_str(&format_ic_array_const("VK_IC", &ic_compressed));
 
-    // fs::write("decrypt_vk_bytes.rs", output).unwrap();
+    // let mut out = File::create("shuffle_vkey.bin").unwrap();
+    // // alpha * beta pairing
+    // out.write_all(&alpha_beta_bytes)?;
 
+    // // gamma_g2_neg_pc
+    // out.write_all(&gamma_neg_bytes)?;
+
+    // // delta_g2_neg_pc
+    // out.write_all(&delta_neg_bytes)?;
+
+    // // IC
+    // for ic in ic_compressed {
+    //     out.write_all(&ic)?;
+    // }
     //     let qap = <Bls12_381 as Pairing>::multi_miller_loop(
     //         [a_prep, prepared_inputs_prep, c_prep],
     //         [b_prep, gamma_neg_prep, delta_neg_prep],

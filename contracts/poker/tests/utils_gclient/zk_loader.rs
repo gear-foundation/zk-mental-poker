@@ -4,10 +4,13 @@ use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 use num_traits::Num;
-use poker_client::{EncryptedCard, ProofBytes, PublicKey, VerificationVariables};
+use poker_client::{EncryptedCard, ProofBytes, PublicKey, VerifyingKeyBytes, VerificationVariables};
 use serde::Deserialize;
 use std::fs;
 use std::str::FromStr;
+use std::ops::Neg;
+use ark_bls12_381::Bls12_381;
+use ark_ec::pairing::Pairing;
 
 #[derive(Debug, Deserialize)]
 struct PartialDecryptionCard {
@@ -102,6 +105,57 @@ pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
         .collect()
 }
 
+pub fn get_vkey(path: &str) -> VerifyingKeyBytes {
+    let json =
+        fs::read_to_string(path).unwrap();
+    let vkey: VKey = serde_json::from_str(&json).unwrap();
+    let alpha = deserialize_g1(&vkey.vk_alpha_1);
+    let mut buf = Vec::new();
+    alpha.serialize_compressed(&mut buf).unwrap();
+
+    let beta = deserialize_g2(&(vkey.vk_beta_2.to_vec())).unwrap();
+    let gamma = deserialize_g2(&vkey.vk_gamma_2).unwrap();
+    let delta = deserialize_g2(&vkey.vk_delta_2).unwrap();
+
+    // IC: Vec<G1Affine> from [String; 3]
+    let ic_points: Vec<G1Affine> = vkey.IC.iter().map(|p| deserialize_g1(p)).collect();
+
+    // pairing(alpha, beta)
+    let alpha_g1_beta_g2 = Bls12_381::pairing(alpha, beta).0;
+
+    let mut alpha_beta_bytes = Vec::new();
+    alpha_g1_beta_g2
+        .serialize_uncompressed(&mut alpha_beta_bytes)
+        .unwrap();
+
+    let gamma_g2_neg_pc = gamma.into_group().neg().into_affine();
+    let delta_g2_neg_pc = delta.into_group().neg().into_affine();
+
+    let mut gamma_neg_bytes = Vec::new();
+    gamma_g2_neg_pc
+        .serialize_uncompressed(&mut gamma_neg_bytes)
+        .unwrap();
+
+    let mut delta_neg_bytes = Vec::new();
+    delta_g2_neg_pc
+        .serialize_uncompressed(&mut delta_neg_bytes)
+        .unwrap();
+
+    let mut ic_uncompressed: Vec<Vec<u8>> = vec![];
+
+    for ic in ic_points.clone() {
+        let mut buf = Vec::new();
+        ic.serialize_uncompressed(&mut buf).unwrap();
+        assert_eq!(buf.len(), 96);
+        ic_uncompressed.push(buf);
+    }
+    VerifyingKeyBytes {
+        alpha_g1_beta_g2: alpha_beta_bytes,
+        gamma_g2_neg_pc: gamma_neg_bytes,
+        delta_g2_neg_pc: delta_neg_bytes,
+        ic: ic_uncompressed
+    }
+}
 pub fn load_partial_decryptions(path: &str) -> Vec<(PublicKey, [EncryptedCard; 2])> {
     let raw = fs::read_to_string(path).expect("failed to read partial_decryptions.json");
     let json: Vec<PartialDecryptionEntry> = serde_json::from_str(&raw).expect("invalid JSON");

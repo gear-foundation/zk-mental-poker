@@ -4,18 +4,18 @@ use sails_rs::gstd::debug;
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
 use utils::*;
-mod decrypt_vk_bytes;
-mod shuffle_vk_bytes;
+mod curve;
 mod utils;
 mod verify;
-mod curve;
+use crate::services::curve::{
+     deserialize_bandersnatch_coords, init_deck_and_card_map, 
+};
+use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
-    decrypt_vk_from_consts, get_shuffle_prepared_inputs_bytes, shuffle_vk_from_consts, verify,
-    verify_batch_shuffle,
+    get_prepared_inputs_bytes, verify_batch,
 };
-
-#[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq)]
+#[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct EncryptedCard {
@@ -33,8 +33,9 @@ struct Storage {
     encrypted_deck: Option<Vec<EncryptedCard>>,
     encrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
     partially_decrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
+    partial_table_card_decryptions: HashMap<EncryptedCard, PartialDecryptionsByCard>,
     revealed_table_cards: Vec<Card>,
-
+    original_card_map: HashMap<EdwardsProjective, Card>,
     table_cards: Vec<EncryptedCard>,
     deck_position: usize,
     participants: HashMap<ActorId, Participant>,
@@ -58,6 +59,7 @@ pub enum Status {
     Registration,
     WaitingShuffleVerification,
     WaitingStart,
+    WaitingPartialDecryptionsForPlayersCards,
     WaitingSetSmallBlind(ActorId),
     WaitingSetBigBlind(ActorId),
     Play {
@@ -120,6 +122,7 @@ pub enum Event {
     Registered {
         participant_id: ActorId,
         pk: PublicKey,
+        all_registered: bool,
     },
     GameStarted,
     CardsDealtToPlayers(Vec<(ActorId, [EncryptedCard; 2])>),
@@ -143,7 +146,7 @@ pub enum Event {
 pub struct PokerService(());
 
 impl PokerService {
-    pub fn init(config: Config, pk: PublicKey) -> Self {
+    pub fn init(config: Config, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
@@ -156,9 +159,7 @@ impl PokerService {
         );
         let mut active_participants = TurnManager::new();
         active_participants.add(config.admin_id);
-        let vk_shuffle_bytes = shuffle_vk_from_consts();
         let vk_shuffle = decode_verifying_key(&vk_shuffle_bytes);
-        let vk_decrypt_bytes = decrypt_vk_from_consts();
         let vk_decrypt = decode_verifying_key(&vk_decrypt_bytes);
         unsafe {
             STORAGE = Some(Storage {
@@ -180,6 +181,8 @@ impl PokerService {
                 table_cards: Vec::new(),
                 partially_decrypted_cards: HashMap::new(),
                 revealed_table_cards: Vec::new(),
+                original_card_map: init_deck_and_card_map(),
+                partial_table_card_decryptions: HashMap::new(),
             });
         }
         Self(())
@@ -218,36 +221,17 @@ impl PokerService {
             },
         );
         storage.active_participants.add(msg_src);
+        let mut all_registered = false;
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingShuffleVerification;
+            all_registered = true;
         }
         self.emit_event(Event::Registered {
             participant_id: msg_src,
             pk,
+            all_registered,
         })
         .expect("Event Invocation Error");
-    }
-
-    pub async fn verify_shuffle(&mut self, instance: VerificationVariables) {
-        let storage = self.get();
-
-        let VerificationVariables {
-            proof_bytes,
-            public_input,
-        } = instance;
-        let prepared_input_bytes = get_shuffle_prepared_inputs_bytes(
-            public_input,
-            storage.vk_shuffle.ic.clone(),
-            storage.builtin_bls381_address,
-        )
-        .await;
-        verify(
-            &storage.vk_shuffle,
-            proof_bytes,
-            prepared_input_bytes,
-            storage.builtin_bls381_address,
-        )
-        .await;
     }
 
     pub async fn shuffle_deck(
@@ -259,14 +243,13 @@ impl PokerService {
         if storage.status != Status::WaitingShuffleVerification {
             panic("Wrong status");
         }
-        verify_batch_shuffle(
+        verify_batch(
             &storage.vk_shuffle,
             instances,
             storage.builtin_bls381_address,
         )
         .await;
         storage.status = Status::WaitingStart;
-        sails_rs::gstd::debug!("ENCRYPTED DECK LEN {:?}", encrypted_deck.len());
         storage.encrypted_deck = Some(encrypted_deck);
     }
 
@@ -280,12 +263,7 @@ impl PokerService {
         }
 
         self.deal_player_cards();
-        storage.status = Status::WaitingSetSmallBlind(
-            storage
-                .active_participants
-                .next()
-                .expect("The player must exist"),
-        );
+        storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
         storage.round += 1;
         self.emit_event(Event::GameStarted)
             .expect("Event Invocation Error");
@@ -329,31 +307,93 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
 
-        verify_batch_shuffle(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
+        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
 
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
         }
+
+        storage.status = Status::WaitingSetSmallBlind(
+            storage
+                .active_participants
+                .next()
+                .expect("The player must exist"),
+        );
     }
 
     pub async fn submit_table_partial_decryptions(
         &mut self,
-        partials: Vec<[Vec<u8>; 3]>,
+        decryptions: Vec<(EncryptedCard, [Vec<u8>; 3])>,
         proofs: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
         let sender = msg::source();
 
-        let stage = match &storage.status {
-            Status::Play { stage } => stage.clone(),
-            _ => panic("Wrong status: must be in Play"),
+        let (base_index, expected_count, next_stage) = match &storage.status {
+            Status::Play { stage } => match stage {
+                Stage::WaitingTableCardsAfterPreFlop => (0, 3, Stage::PreFlop),
+                Stage::WaitingTableCardsAfterFlop => (3, 1, Stage::Turn),
+                Stage::WaitingTableCardsAfterTurn => (4, 1, Stage::River),
+                _ => panic("Not in a card decryption waiting stage"),
+            },
+            _ => panic("Wrong status"),
         };
-        
-        let (base_index, expected_count) = match stage {
-            Stage::PreFlop => (0, 3),
-            Stage::Turn => (3, 1),
-            Stage::River => (4, 1),
-        };
+
+        if !storage.participants.contains_key(&sender) {
+            panic!("Only participants can submit decryptions");
+        }
+
+        if decryptions.len() != expected_count {
+            panic!("Invalid decryption count");
+        }
+
+        for (card, decryption) in decryptions {
+            assert!(storage.table_cards.contains(&card), "Wrong card");
+            storage
+                .partial_table_card_decryptions
+                .entry(card)
+                .or_default()
+                .add(sender, decryption);
+        }
+
+        let first_card = &storage.table_cards[base_index];
+
+        let all_submitted = storage
+            .partial_table_card_decryptions
+            .get(first_card)
+            .map(|by_card| by_card.participants.len() == storage.participants.len())
+            .unwrap_or(false);
+        if all_submitted {
+            let mut revealed_cards = Vec::with_capacity(expected_count);
+            for i in 0..expected_count {
+                let encrypted_card = &storage.table_cards[i];
+
+                let by_card = storage
+                    .partial_table_card_decryptions
+                    .get(encrypted_card)
+                    .expect("Decryptions must exist for this card");
+
+                let partials = by_card
+                    .partials
+                    .iter()
+                    .map(|pd| pd.clone())
+                    .collect::<Vec<_>>();
+
+                // if let Some(card) =
+                //     decrypt_point(&storage.original_card_map, encrypted_card, partials)
+                // {
+                //     revealed_cards.push(card);
+                // } else {
+                //     panic!("Failed to decrypt card");
+                // }
+            }
+
+            storage.revealed_table_cards.extend(revealed_cards);
+
+            storage.partially_decrypted_cards.clear();
+
+            storage.status = Status::Play { stage: next_stage };
+        }
     }
 
     pub fn cancel_game(&mut self) {
@@ -695,7 +735,7 @@ impl PokerService {
             panic("Encrypted table cards not set");
         }
 
-        verify_batch_shuffle(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
+        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
 
         storage.revealed_table_cards.extend(new_cards.clone());
     }

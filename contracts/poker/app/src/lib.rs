@@ -2,15 +2,15 @@
 
 mod services;
 use sails_rs::prelude::*;
-use services::{Config, PokerService, PublicKey};
+use services::{Config, PokerService, PublicKey, VerifyingKeyBytes};
 
 pub struct PokerProgram(());
 
 #[sails_rs::program]
 impl PokerProgram {
     // Program's constructor
-    pub fn new(config: Config, pk: PublicKey) -> Self {
-        PokerService::init(config, pk);
+    pub fn new(config: Config, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
+        PokerService::init(config, pk, vk_shuffle_bytes, vk_decrypt_bytes);
         Self(())
     }
 

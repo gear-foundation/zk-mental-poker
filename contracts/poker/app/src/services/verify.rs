@@ -1,4 +1,3 @@
-use crate::services::{decrypt_vk_bytes, shuffle_vk_bytes};
 use core::ops::AddAssign;
 use gbuiltin_bls381::{
     Request, Response,
@@ -23,29 +22,6 @@ pub struct VerifyingKeyBytes {
     pub ic: Vec<Vec<u8>>,
 }
 
-pub fn shuffle_vk_from_consts() -> VerifyingKeyBytes {
-    VerifyingKeyBytes {
-        alpha_g1_beta_g2: shuffle_vk_bytes::VK_ALPHA_G1_BETA_G2.to_vec(),
-        gamma_g2_neg_pc: shuffle_vk_bytes::VK_GAMMA_G2_NEG_PC.to_vec(),
-        delta_g2_neg_pc: shuffle_vk_bytes::VK_DELTA_G2_NEG_PC.to_vec(),
-        ic: shuffle_vk_bytes::VK_IC
-            .iter()
-            .map(|row| row.to_vec())
-            .collect(),
-    }
-}
-
-pub fn decrypt_vk_from_consts() -> VerifyingKeyBytes {
-    VerifyingKeyBytes {
-        alpha_g1_beta_g2: decrypt_vk_bytes::VK_ALPHA_G1_BETA_G2.to_vec(),
-        gamma_g2_neg_pc: decrypt_vk_bytes::VK_GAMMA_G2_NEG_PC.to_vec(),
-        delta_g2_neg_pc: decrypt_vk_bytes::VK_DELTA_G2_NEG_PC.to_vec(),
-        ic: decrypt_vk_bytes::VK_IC
-            .iter()
-            .map(|row| row.to_vec())
-            .collect(),
-    }
-}
 #[derive(Debug, Clone)]
 pub struct VerifyingKey {
     pub alpha_g1_beta_g2: ArkScale<<Bls12_381 as Pairing>::TargetField>,
@@ -100,22 +76,7 @@ pub struct VerificationVariables {
     pub public_input: Vec<Vec<u8>>,
 }
 
-#[derive(Debug, Encode, Decode, TypeInfo, Clone)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct VerificationResult {
-    pub res: u8,
-    pub hit: u8,
-}
-
-#[derive(Debug, Encode, Decode, TypeInfo, Clone)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct PublicStartInput {
-    pub hash: Vec<u8>,
-}
-
-pub async fn verify_batch_shuffle(
+pub async fn verify_batch(
     vk: &VerifyingKey,
     instances: Vec<VerificationVariables>,
     builtin_bls381_address: ActorId,
@@ -132,8 +93,7 @@ pub async fn verify_batch_shuffle(
         } = instance;
 
         let prepared_inputs =
-            get_shuffle_prepared_inputs_bytes(public_input, vk.ic.clone(), builtin_bls381_address)
-                .await;
+            get_prepared_inputs_bytes(public_input, vk.ic.clone(), builtin_bls381_address).await;
         let a = G1Affine::deserialize_uncompressed_unchecked(&*proof_bytes.a)
             .expect("Deserialize error");
         let b = G2Affine::deserialize_uncompressed_unchecked(&*proof_bytes.b)
@@ -156,57 +116,6 @@ pub async fn verify_batch_shuffle(
 
     if exp.0 != expected {
         ext::panic("Batch verification failed");
-    }
-}
-
-// pub async fn verify_batch_shuffle(
-//     vk: &VerifyingKey,
-//     instances: Vec<VerificationVariables>,
-//     builtin_bls381_address: ActorId,
-// ) {
-//     for instance in instances {
-//         let VerificationVariables {
-//             proof_bytes,
-//             public_input,
-//         } = instance;
-//         let prepared_input_bytes =
-//             get_shuffle_prepared_inputs_bytes(public_input, vk.ic.clone(), builtin_bls381_address)
-//                 .await;
-
-//         verify(
-//             vk,
-//             proof_bytes,
-//             prepared_input_bytes,
-//             builtin_bls381_address,
-//         )
-//         .await;
-//     }
-// }
-
-pub async fn verify(
-    vk: &VerifyingKey,
-    proof: ProofBytes,
-    prepared_inputs: G1Affine,
-    builtin_bls381_address: ActorId,
-) {
-    let a = G1Affine::deserialize_uncompressed_unchecked(&*proof.a).expect("Deserialize error");
-
-    let b = G2Affine::deserialize_uncompressed_unchecked(&*proof.b).expect("Deserialize error");
-
-    let c = G1Affine::deserialize_uncompressed_unchecked(&*proof.c).expect("Deserialize error");
-
-    let a: ArkScale<Vec<G1Affine>> = vec![a, prepared_inputs, c].into();
-    let b: ArkScale<Vec<G2Affine>> = vec![b, vk.gamma_g2_neg_pc, vk.delta_g2_neg_pc].into();
-    let miller_out =
-        calculate_multi_miller_loop(a.encode(), b.encode(), builtin_bls381_address).await;
-
-    sails_rs::gstd::debug!("GAS BEFORE EXP {:?}", sails_rs::gstd::exec::gas_available());
-
-    let exp = calculate_exponentiation(miller_out, builtin_bls381_address).await;
-    sails_rs::gstd::debug!("GAS AFTER EXP {:?}", sails_rs::gstd::exec::gas_available());
-
-    if exp != vk.alpha_g1_beta_g2 {
-        ext::panic("Verification failed");
     }
 }
 
@@ -264,7 +173,7 @@ async fn calculate_exponentiation(
     exp
 }
 
-pub async fn get_shuffle_prepared_inputs_bytes(
+pub async fn get_prepared_inputs_bytes(
     public_input: Vec<Vec<u8>>,
     ic: Vec<G1Affine>,
     builtin_bls381_address: ActorId,
@@ -279,24 +188,6 @@ pub async fn get_shuffle_prepared_inputs_bytes(
 
     prepare_inputs(&ic, &public_inputs, builtin_bls381_address).await
 }
-
-// pub async fn get_start_prepared_inputs_bytes(
-//     public_input: PublicStartInput,
-//     ic: Vec<Vec<u8>>,
-// ) -> Vec<u8> {
-//     let public_inputs: Vec<Fr> = vec![
-//         Fr::deserialize_uncompressed_unchecked(&*public_input.hash).expect("Deserialize error"),
-//     ];
-
-//     let gamma_abc_g1: Vec<G1Affine> = ic
-//         .into_iter()
-//         .map(|ic_element| {
-//             G1Affine::deserialize_uncompressed_unchecked(&*ic_element).expect("Deserialize error")
-//         })
-//         .collect();
-
-//     prepare_inputs(&gamma_abc_g1, &public_inputs).await
-// }
 
 async fn prepare_inputs(
     gamma_abc_g1: &[G1Affine],
