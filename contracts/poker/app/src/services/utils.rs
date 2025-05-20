@@ -1,5 +1,4 @@
 use core::fmt::Debug;
-use gbuiltin_bls381::ark_ff::Field;
 use gstd::{debug, ext, format, msg};
 use sails_rs::collections::HashMap;
 use sails_rs::collections::HashSet;

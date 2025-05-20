@@ -1,20 +1,20 @@
 #![allow(static_mut_refs)]
 use sails_rs::collections::HashMap;
-use sails_rs::gstd::{exec, debug, msg};
+use sails_rs::gstd::{debug, exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
 mod utils;
 mod verify;
 use crate::services::curve::{
-     deserialize_bandersnatch_coords, init_deck_and_card_map, 
+    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
+use pts_client::pts::io as pts_io;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
     get_prepared_inputs_bytes, verify_batch,
 };
-use pts_client::pts::io as pts_io;
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
@@ -50,7 +50,7 @@ struct Storage {
     betting_bank: HashMap<ActorId, u128>,
     all_in_players: Vec<ActorId>,
     already_invested_in_the_circle: HashMap<ActorId, u128>, // The mapa is needed to keep track of how much a person has put on the table,
-                                                            // which can change after each player's turn
+    // which can change after each player's turn
     pts_actor_id: ActorId,
 }
 
@@ -214,7 +214,11 @@ impl PokerService {
         if storage.participants.contains_key(&msg_src) {
             panic("Already registered");
         }
-        let request = pts_io::Transfer::encode_call(msg_src, exec::program_id(), storage.config.starting_bank);
+        let request = pts_io::Transfer::encode_call(
+            msg_src,
+            exec::program_id(),
+            storage.config.starting_bank,
+        );
 
         msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
             .expect("Error in async message to PTS contract")
@@ -443,13 +447,13 @@ impl PokerService {
                     .map(|pd| pd.clone())
                     .collect::<Vec<_>>();
 
-                // if let Some(card) =
-                //     decrypt_point(&storage.original_card_map, encrypted_card, partials)
-                // {
-                //     revealed_cards.push(card);
-                // } else {
-                //     panic!("Failed to decrypt card");
-                // }
+                if let Some(card) =
+                    decrypt_point(&storage.original_card_map, encrypted_card, partials)
+                {
+                    revealed_cards.push(card);
+                } else {
+                    panic!("Failed to decrypt card");
+                }
             }
 
             storage.revealed_table_cards.extend(revealed_cards);
@@ -480,6 +484,95 @@ impl PokerService {
         self.emit_event(Event::GameCanceled {
             status: storage.status.clone(),
         })
+        .expect("Event Invocation Error");
+    }
+
+    pub fn set_small_blind(&mut self) {
+        let storage = self.get_mut();
+        let player = msg::source();
+
+        if let Status::WaitingSetSmallBlind(id) = storage.status {
+            if player != id {
+                panic("Access denied");
+            }
+        } else {
+            panic("Wrong status");
+        }
+
+        let participant = storage.participants.get_mut(&player).unwrap();
+        if participant.balance <= storage.config.small_blind {
+            storage.active_participants.remove(&player);
+            storage.all_in_players.push(player);
+            storage
+                .already_invested_in_the_circle
+                .insert(player, participant.balance);
+            storage.betting_bank.insert(player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage
+                .already_invested_in_the_circle
+                .insert(player, storage.config.small_blind);
+            storage
+                .betting_bank
+                .insert(player, storage.config.small_blind);
+            participant.balance -= storage.config.small_blind;
+        }
+
+        storage.status = Status::WaitingSetBigBlind(
+            storage
+                .active_participants
+                .next()
+                .expect("The player must exist"),
+        );
+        self.emit_event(Event::SmallBlindIsSet)
+            .expect("Event Invocation Error");
+    }
+
+    pub fn set_big_blind(&mut self) {
+        let storage = self.get_mut();
+        let player = msg::source();
+
+        let big_blind_id = if let Status::WaitingSetBigBlind(id) = storage.status {
+            if player != id {
+                panic("Access denied");
+            }
+            id
+        } else {
+            panic("Wrong status");
+        };
+        let participant = storage.participants.get_mut(&player).unwrap();
+
+        if participant.balance <= storage.config.big_blind {
+            storage.active_participants.remove(&player);
+            storage.all_in_players.push(player);
+            storage
+                .already_invested_in_the_circle
+                .insert(player, participant.balance);
+            storage.betting_bank.insert(player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage
+                .already_invested_in_the_circle
+                .insert(player, storage.config.big_blind);
+            storage
+                .betting_bank
+                .insert(player, storage.config.big_blind);
+            participant.balance -= storage.config.big_blind;
+        }
+
+        storage.status = Status::Play {
+            stage: Stage::PreFlop,
+        };
+        storage.betting = Some(BettingStage {
+            turn: storage
+                .active_participants
+                .next()
+                .expect("The player must exist"),
+            current_bet: storage.config.big_blind,
+            acted_players: vec![big_blind_id],
+        });
+        self.emit_event(Event::BigBlindIsSet)
+            .expect("Event Invocation Error");
         .expect("Event Invocation Error");
     }
 
@@ -549,7 +642,7 @@ impl PokerService {
                 }
                 betting.acted_players.push(player);
             }
-            Action::Raise {bet} => {
+            Action::Raise { bet } => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
