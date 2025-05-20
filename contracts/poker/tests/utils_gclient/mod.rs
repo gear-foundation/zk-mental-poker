@@ -57,7 +57,7 @@ pub async fn init(
     api: &GearApi,
     pk: PublicKey,
     listener: &mut EventListener,
-) -> Result<ProgramId> {
+) -> Result<(ProgramId, ProgramId)> {
     // PTS
     let path = "../pts/target/wasm32-gear/release/pts.opt.wasm";
     let accural: u128 = 10_000;
@@ -68,7 +68,7 @@ pub async fn init(
     ]
     .concat();
 
-    let (message_id, program_id, _hash) = api
+    let (message_id, pts_program_id, _hash) = api
         .upload_program_bytes(
             gclient::code_from_os(path).unwrap(),
             gclient::now_micros().to_le_bytes(),
@@ -90,7 +90,7 @@ pub async fn init(
         number_of_participants: 3,
         starting_bank: 10,
     };
-    let pts_id_bytes: [u8; 32] = program_id.into();
+    let pts_id_bytes: [u8; 32] = pts_program_id.into();
     let pts_id: ActorId = pts_id_bytes.into();
     let shuffle_vkey = get_vkey("tests/test_data/shuffle_vkey.json");
     let decrypt_vkey = get_vkey("tests/test_data/decrypt_vkey.json");
@@ -111,7 +111,17 @@ pub async fn init(
         .expect("Error upload program bytes");
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    Ok(program_id)
+    let poker_id_bytes: [u8; 32] = program_id.into();
+    let poker_id: ActorId = poker_id_bytes.into();
+
+    // add poker to admins in pts
+    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "AddAdmin", payload: (poker_id));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    Ok((pts_program_id, program_id))
 }
 
 pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Result<()> {
@@ -128,7 +138,7 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     pk_to_actor_id.push((pks[0].1.clone(), id));
 
     // Init
-    let program_id = init(&api, pks[0].1.clone(), listener).await?;
+    let (pts_id, program_id) = init(&api, pks[0].1.clone(), listener).await?;
 
     // Resgiter
     println!("REGISTER");
@@ -136,6 +146,9 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     let api = get_new_client(&api, USERS_STR[1]).await;
     let id = api.get_actor_id();
     pk_to_actor_id.push((pks[1].1.clone(), id));
+    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -143,6 +156,10 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     let api = get_new_client(&api, USERS_STR[2]).await;
     let id = api.get_actor_id();
     pk_to_actor_id.push((pks[2].1.clone(), id));
+
+    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[2].1.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
