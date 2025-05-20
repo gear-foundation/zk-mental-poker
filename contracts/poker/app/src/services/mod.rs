@@ -16,6 +16,8 @@ pub use verify::{
 };
 use pts_client::pts::io as pts_io;
 
+const TIME_FOR_MOVE: u64 = 30_000; // 30s
+
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
@@ -147,7 +149,7 @@ pub enum Event {
 pub struct PokerService(());
 
 impl PokerService {
-    pub async fn init(config: Config, pts_actor_id: ActorId, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
+    pub fn init(config: Config, pts_actor_id: ActorId, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
 
         let mut participants = HashMap::new();
         participants.insert(
@@ -326,6 +328,7 @@ impl PokerService {
                 .active_participants
                 .next()
                 .expect("The player must exist"),
+            last_active_time: None,
             current_bet: storage.config.big_blind,
             acted_players: vec![bb_player],
         });
@@ -383,6 +386,9 @@ impl PokerService {
         storage.status = Status::Play {
             stage: Stage::PreFlop,
         };
+        if let Some(betting) = &mut storage.betting {
+            betting.last_active_time = Some(exec::block_timestamp());
+        }
     }
 
     pub async fn submit_table_partial_decryptions(
@@ -457,6 +463,10 @@ impl PokerService {
             storage.partially_decrypted_cards.clear();
 
             storage.status = Status::Play { stage: next_stage };
+
+            if let Some(betting) = &mut storage.betting {
+                betting.last_active_time = Some(exec::block_timestamp());
+            } 
         }
     }
 
@@ -501,13 +511,19 @@ impl PokerService {
 
         let betting = storage.betting.as_mut().expect("Betting must exist");
 
-        if betting.turn != player {
-            debug!(
-                "Not your turn: betting.turn {:?} player {:?}",
-                betting.turn, player
-            );
-            panic("Not your turn");
+        let last_active_time = betting.last_active_time.expect("Last active time must be exist");
+        let current_time = exec::block_timestamp();
+        let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
+        let current_turn_player_id = storage.active_participants.skip_and_remove(number_of_passes);
+
+        if let Some(current_turn_player_id) = current_turn_player_id {
+            if current_turn_player_id != player {
+                panic!("Not your turn!");
+            }
+        } else {
+            // TODO: actions if no one has made a move
         }
+
         let participant = storage.participants.get_mut(&player).unwrap();
 
         // Process the player's action
@@ -645,6 +661,7 @@ impl PokerService {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
                 betting.turn = storage.active_participants.next().unwrap();
+                betting.last_active_time = None;
                 debug!("TURN {:?}", betting.turn);
                 betting.current_bet = 0;
 
@@ -659,6 +676,7 @@ impl PokerService {
                 .next()
                 .expect("The player must exist");
             debug!("AFTER TURN {:?}", betting.turn);
+            betting.last_active_time = Some(current_time);
         }
         self.emit_event(Event::TurnIsMade { action })
             .expect("Event Invocation Error");

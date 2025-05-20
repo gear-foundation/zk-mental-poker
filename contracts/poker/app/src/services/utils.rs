@@ -68,6 +68,32 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Some(id)
     }
 
+    pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
+        if self.active_ids.is_empty() {
+            return None;
+        }
+
+        for _ in 0..n {
+            if self.active_ids.is_empty() {
+                break;
+            }
+            let idx = self.turn_index as usize % self.active_ids.len();
+            self.active_ids.remove(idx);
+
+            // Не нужно инкрементировать turn_index, т.к. удалили текущего
+            if self.turn_index as usize >= self.active_ids.len() {
+                self.turn_index = 0;
+            }
+        }
+
+        if self.active_ids.is_empty() {
+            return None;
+        }
+
+        let next_id = self.active_ids[self.turn_index as usize].clone();
+        Some(next_id)
+    }
+
     pub fn reset_turn_index(&mut self) {
         self.turn_index = 0;
     }
@@ -119,6 +145,7 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct BettingStage {
     pub turn: ActorId,
+    pub last_active_time: Option<u64>,
     pub current_bet: u128,
     pub acted_players: Vec<ActorId>, // players who have placed a bet (Check or Call)
                                      // it's to keep track of when the lap ends
