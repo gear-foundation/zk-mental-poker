@@ -45,7 +45,7 @@ struct Storage {
     active_participants: TurnManager<ActorId>,
     status: Status,
     config: Config,
-    round: u128,
+    round: u32,
     betting: Option<BettingStage>,
     betting_bank: HashMap<ActorId, u128>,
     all_in_players: Vec<ActorId>,
@@ -62,8 +62,6 @@ pub enum Status {
     WaitingShuffleVerification,
     WaitingStart,
     WaitingPartialDecryptionsForPlayersCards,
-    WaitingSetSmallBlind(ActorId),
-    WaitingSetBigBlind(ActorId),
     Play {
         stage: Stage,
     },
@@ -150,13 +148,6 @@ pub struct PokerService(());
 
 impl PokerService {
     pub async fn init(config: Config, pts_actor_id: ActorId, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
-
-        let request = pts_io::Transfer::encode_call(config.admin_id, exec::program_id(), config.starting_bank);
-
-        msg::send_bytes_for_reply(pts_actor_id, request, 0, 0)
-            .expect("Error in async message to PTS contract")
-            .await
-            .expect("PTS: Error transfer points to contract");
 
         let mut participants = HashMap::new();
         participants.insert(
@@ -273,16 +264,72 @@ impl PokerService {
         storage.encrypted_deck = Some(encrypted_deck);
     }
 
-    pub fn start_game(&mut self) {
+    pub async fn start_game(&mut self) {
         let storage = self.get_mut();
-        if msg::source() != storage.config.admin_id {
+        let msg_src = msg::source();
+        if msg_src != storage.config.admin_id {
             panic("Access denied");
         }
         if storage.status != Status::WaitingStart {
             panic("Wrong status");
         }
 
+        let request = pts_io::Transfer::encode_call(storage.config.admin_id, exec::program_id(), storage.config.starting_bank);
+
+        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error transfer points to contract");
+
         self.deal_player_cards();
+
+        let sb_player = storage
+            .active_participants
+            .next()
+            .expect("The player must exist");
+
+        let participant = storage.participants.get_mut(&sb_player).unwrap();
+        if participant.balance <= storage.config.small_blind {
+            storage.active_participants.remove(&sb_player);
+            storage.all_in_players.push(sb_player);
+            storage.already_invested_in_the_circle.insert(sb_player, participant.balance);
+            storage.betting_bank.insert(sb_player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage.already_invested_in_the_circle.insert(sb_player, storage.config.small_blind);
+            storage.betting_bank.insert(sb_player, storage.config.small_blind);
+            participant.balance -= storage.config.small_blind;
+        }
+
+        let bb_player = storage
+            .active_participants
+            .next()
+            .expect("The player must exist");
+
+        let participant = storage.participants.get_mut(&bb_player).unwrap();
+
+        if participant.balance <= storage.config.big_blind {
+            storage.active_participants.remove(&bb_player);
+            storage.all_in_players.push(bb_player);
+            storage.already_invested_in_the_circle.insert(bb_player, participant.balance);
+            storage.betting_bank.insert(bb_player, participant.balance);
+            participant.balance = 0;
+        } else {
+            storage.already_invested_in_the_circle.insert(bb_player, storage.config.big_blind);
+            storage.betting_bank.insert(bb_player, storage.config.big_blind);
+            participant.balance -= storage.config.big_blind;
+        }
+
+
+        storage.betting = Some(BettingStage {
+            turn: storage
+                .active_participants
+                .next()
+                .expect("The player must exist"),
+            current_bet: storage.config.big_blind,
+            acted_players: vec![bb_player],
+        });
+
         storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
         storage.round += 1;
         self.emit_event(Event::GameStarted)
@@ -333,12 +380,9 @@ impl PokerService {
             storage.partially_decrypted_cards.insert(player, cards);
         }
 
-        storage.status = Status::WaitingSetSmallBlind(
-            storage
-                .active_participants
-                .next()
-                .expect("The player must exist"),
-        );
+        storage.status = Status::Play {
+            stage: Stage::PreFlop,
+        };
     }
 
     pub async fn submit_table_partial_decryptions(
@@ -422,6 +466,11 @@ impl PokerService {
         if msg::source() != storage.config.admin_id {
             panic("Access denied");
         }
+        for (id, bet) in storage.betting_bank.iter() {
+            let participant = storage.participants.get_mut(id).unwrap();
+            participant.balance += *bet;
+
+        }
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingStart;
         } else {
@@ -432,82 +481,6 @@ impl PokerService {
             status: storage.status.clone(),
         })
         .expect("Event Invocation Error");
-    }
-
-    pub fn set_small_blind(&mut self) {
-        let storage = self.get_mut();
-        let player = msg::source();
-
-        if let Status::WaitingSetSmallBlind(id) = storage.status {
-            if player != id {
-                panic("Access denied");
-            }
-        } else {
-            panic("Wrong status");
-        }
-
-        let participant = storage.participants.get_mut(&player).unwrap();
-        if participant.balance <= storage.config.small_blind {
-            storage.active_participants.remove(&player);
-            storage.all_in_players.push(player);
-            storage.already_invested_in_the_circle.insert(player, participant.balance);
-            storage.betting_bank.insert(player, participant.balance);
-            participant.balance = 0;
-        } else {
-            storage.already_invested_in_the_circle.insert(player, storage.config.small_blind);
-            storage.betting_bank.insert(player, storage.config.small_blind);
-            participant.balance -= storage.config.small_blind;
-        }
-
-        storage.status = Status::WaitingSetBigBlind(
-            storage
-                .active_participants
-                .next()
-                .expect("The player must exist"),
-        );
-        self.emit_event(Event::SmallBlindIsSet)
-            .expect("Event Invocation Error");
-    }
-
-    pub fn set_big_blind(&mut self) {
-        let storage = self.get_mut();
-        let player = msg::source();
-
-        let big_blind_id = if let Status::WaitingSetBigBlind(id) = storage.status {
-            if player != id {
-                panic("Access denied");
-            }
-            id
-        } else {
-            panic("Wrong status");
-        };
-        let participant = storage.participants.get_mut(&player).unwrap();
-
-        if participant.balance <= storage.config.big_blind {
-            storage.active_participants.remove(&player);
-            storage.all_in_players.push(player);
-            storage.already_invested_in_the_circle.insert(player, participant.balance);
-            storage.betting_bank.insert(player, participant.balance);
-            participant.balance = 0;
-        } else {
-            storage.already_invested_in_the_circle.insert(player, storage.config.big_blind);
-            storage.betting_bank.insert(player, storage.config.big_blind);
-            participant.balance -= storage.config.big_blind;
-        }
-
-        storage.status = Status::Play {
-            stage: Stage::PreFlop,
-        };
-        storage.betting = Some(BettingStage {
-            turn: storage
-                .active_participants
-                .next()
-                .expect("The player must exist"),
-            current_bet: storage.config.big_blind,
-            acted_players: vec![big_blind_id],
-        });
-        self.emit_event(Event::BigBlindIsSet)
-            .expect("Event Invocation Error");
     }
 
     pub fn turn(&mut self, action: Action) {
@@ -632,12 +605,6 @@ impl PokerService {
                 participant.balance = 0;
             }
         }
-        debug!("BEFORE TURN {:?}", betting.turn);
-        betting.turn = storage
-            .active_participants
-            .next()
-            .expect("The player must exist");
-        debug!("AFTER TURN {:?}", betting.turn);
 
         // Check if the game should end immediately (only one player left)
         if storage.active_participants.len() + storage.all_in_players.len() == 1 {
@@ -685,6 +652,13 @@ impl PokerService {
                 self.emit_event(Event::NextStage(stage.clone()))
                     .expect("Event Invocation Error");
             }
+        } else {
+            debug!("BEFORE TURN {:?}", betting.turn);
+            betting.turn = storage
+                .active_participants
+                .next()
+                .expect("The player must exist");
+            debug!("AFTER TURN {:?}", betting.turn);
         }
         self.emit_event(Event::TurnIsMade { action })
             .expect("Event Invocation Error");
@@ -810,7 +784,7 @@ impl PokerService {
     pub fn config(&self) -> &'static Config {
         &self.get().config
     }
-    pub fn round(&self) -> u128 {
+    pub fn round(&self) -> u32 {
         self.get().round
     }
     pub fn betting(&self) -> &'static Option<BettingStage> {
