@@ -3,7 +3,7 @@ use gbuiltin_bls381::{
     Request, Response,
     ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective as G1, G2Affine},
     ark_ec::{AffineRepr, Group, pairing::Pairing},
-    ark_ff::{Field, PrimeField},
+    ark_ff::Field,
     ark_scale,
     ark_scale::hazmat::ArkScaleProjective,
     ark_serialize::{CanonicalDeserialize, CanonicalSerialize},

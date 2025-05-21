@@ -1,20 +1,20 @@
 #![allow(static_mut_refs)]
 use sails_rs::collections::HashMap;
-use sails_rs::gstd::{exec, debug, msg};
+use sails_rs::gstd::{debug, exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
 mod utils;
 mod verify;
 use crate::services::curve::{
-     deserialize_bandersnatch_coords, init_deck_and_card_map, 
+    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
+use pts_client::pts::io as pts_io;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
     get_prepared_inputs_bytes, verify_batch,
 };
-use pts_client::pts::io as pts_io;
 
 const TIME_FOR_MOVE: u64 = 30_000; // 30s
 
@@ -52,7 +52,7 @@ struct Storage {
     betting_bank: HashMap<ActorId, u128>,
     all_in_players: Vec<ActorId>,
     already_invested_in_the_circle: HashMap<ActorId, u128>, // The mapa is needed to keep track of how much a person has put on the table,
-                                                            // which can change after each player's turn
+    // which can change after each player's turn
     pts_actor_id: ActorId,
 }
 
@@ -216,7 +216,11 @@ impl PokerService {
         if storage.participants.contains_key(&msg_src) {
             panic("Already registered");
         }
-        let request = pts_io::Transfer::encode_call(msg_src, exec::program_id(), storage.config.starting_bank);
+        let request = pts_io::Transfer::encode_call(
+            msg_src,
+            exec::program_id(),
+            storage.config.starting_bank,
+        );
 
         msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
             .expect("Error in async message to PTS contract")
@@ -330,7 +334,7 @@ impl PokerService {
                 .expect("The player must exist"),
             last_active_time: None,
             current_bet: storage.config.big_blind,
-            acted_players: vec![bb_player],
+            acted_players: vec![],
         });
 
         storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
@@ -449,13 +453,13 @@ impl PokerService {
                     .map(|pd| pd.clone())
                     .collect::<Vec<_>>();
 
-                // if let Some(card) =
-                //     decrypt_point(&storage.original_card_map, encrypted_card, partials)
-                // {
-                //     revealed_cards.push(card);
-                // } else {
-                //     panic!("Failed to decrypt card");
-                // }
+                if let Some(card) =
+                    decrypt_point(&storage.original_card_map, encrypted_card, partials)
+                {
+                    revealed_cards.push(card);
+                } else {
+                    panic!("Failed to decrypt card");
+                }
             }
 
             storage.revealed_table_cards.extend(revealed_cards);
@@ -471,10 +475,12 @@ impl PokerService {
     }
 
     pub fn cancel_game(&mut self) {
-        // TODO: add logic to return value player
         let storage = self.get_mut();
         if msg::source() != storage.config.admin_id {
             panic("Access denied");
+        }
+        if matches!(storage.status, Status::Finished { .. }) {
+            panic("Game is over");
         }
         for (id, bet) in storage.betting_bank.iter() {
             let participant = storage.participants.get_mut(id).unwrap();
@@ -494,6 +500,7 @@ impl PokerService {
     }
 
     pub fn turn(&mut self, action: Action) {
+        debug!("TURN");
         let player = msg::source();
         let storage = self.get_mut();
 
@@ -514,18 +521,32 @@ impl PokerService {
         let last_active_time = betting.last_active_time.expect("Last active time must be exist");
         let current_time = exec::block_timestamp();
         let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
-        let current_turn_player_id = storage.active_participants.skip_and_remove(number_of_passes);
+        debug!("number_of_passes: {:?}", number_of_passes);
+        if number_of_passes != 0 {
+            let current_turn_player_id = storage.active_participants.skip_and_remove(number_of_passes);
 
-        if let Some(current_turn_player_id) = current_turn_player_id {
-            if current_turn_player_id != player {
-                panic!("Not your turn!");
+            if let Some(current_turn_player_id) = current_turn_player_id {
+                debug!("current_turn_player_id: {:?}", current_turn_player_id);
+                debug!("player: {:?}", player);
+                if current_turn_player_id != player {
+                    panic!("Not your turn!");
+                }
+            } else {
+                storage.status = Status::Finished {
+                    winners: vec![],
+                    cash_prize: vec![],
+                };
+                storage.betting = None;
+                return;
             }
         } else {
-            // TODO: actions if no one has made a move
+            if betting.turn != player {
+                panic!("Not your turn!");
+            }
         }
+        
 
         let participant = storage.participants.get_mut(&player).unwrap();
-
         // Process the player's action
         match action {
             Action::Fold => {
@@ -538,7 +559,7 @@ impl PokerService {
                     .unwrap_or(&0);
                 debug!("CALL {:?}", already_invested);
                 let call_value = betting.current_bet - already_invested;
-                if participant.balance <= call_value {
+                if call_value == 0 || participant.balance <= call_value {
                     panic("Wrong action");
                 }
                 participant.balance -= call_value;
@@ -565,7 +586,7 @@ impl PokerService {
                 }
                 betting.acted_players.push(player);
             }
-            Action::Raise {bet} => {
+            Action::Raise { bet } => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
@@ -637,7 +658,7 @@ impl PokerService {
             };
             let prize = storage.betting_bank.values().sum();
             let participant = storage.participants.get_mut(winner).unwrap();
-            participant.balance = prize;
+            participant.balance += prize;
             storage.status = Status::Finished {
                 winners: vec![*winner],
                 cash_prize: vec![prize],
@@ -662,6 +683,7 @@ impl PokerService {
                 storage.already_invested_in_the_circle = HashMap::new();
                 betting.turn = storage.active_participants.next().unwrap();
                 betting.last_active_time = None;
+                betting.acted_players.clear();
                 debug!("TURN {:?}", betting.turn);
                 betting.current_bet = 0;
 

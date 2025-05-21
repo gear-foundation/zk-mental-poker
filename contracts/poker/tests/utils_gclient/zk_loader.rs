@@ -1,16 +1,18 @@
+use ark_bls12_381::Bls12_381;
 use ark_bls12_381::{Fq, Fq2, Fr, G1Affine, G2Affine};
+use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 use num_traits::Num;
-use poker_client::{EncryptedCard, ProofBytes, PublicKey, VerifyingKeyBytes, VerificationVariables};
+use poker_client::{
+    EncryptedCard, ProofBytes, PublicKey, VerificationVariables, VerifyingKeyBytes,
+};
 use serde::Deserialize;
 use std::fs;
-use std::str::FromStr;
 use std::ops::Neg;
-use ark_bls12_381::Bls12_381;
-use ark_ec::pairing::Pairing;
+use std::str::FromStr;
 
 #[derive(Debug, Deserialize)]
 struct PartialDecryptionCard {
@@ -73,7 +75,7 @@ pub fn load_player_public_keys(path: &str) -> Vec<(usize, PublicKey)> {
 
 fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
     let n = BigUint::from_str_radix(s, 10).expect("invalid decimal");
-    let mut b = n.to_bytes_be();
+    let b = n.to_bytes_be();
     if b.len() > 32 {
         panic!("too large for 32 bytes");
     }
@@ -106,8 +108,7 @@ pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
 }
 
 pub fn get_vkey(path: &str) -> VerifyingKeyBytes {
-    let json =
-        fs::read_to_string(path).unwrap();
+    let json = fs::read_to_string(path).unwrap();
     let vkey: VKey = serde_json::from_str(&json).unwrap();
     let alpha = deserialize_g1(&vkey.vk_alpha_1);
     let mut buf = Vec::new();
@@ -153,7 +154,7 @@ pub fn get_vkey(path: &str) -> VerifyingKeyBytes {
         alpha_g1_beta_g2: alpha_beta_bytes,
         gamma_g2_neg_pc: gamma_neg_bytes,
         delta_g2_neg_pc: delta_neg_bytes,
-        ic: ic_uncompressed
+        ic: ic_uncompressed,
     }
 }
 pub fn load_partial_decryptions(path: &str) -> Vec<(PublicKey, [EncryptedCard; 2])> {

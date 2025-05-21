@@ -1,8 +1,7 @@
 use crate::services::{Card, EncryptedCard, Suit};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
-use ark_ff::{BigInt, BigInteger, Field, PrimeField};
-use gbuiltin_bls381::ark_serialize::CanonicalDeserialize;
+use ark_ff::{BigInt, PrimeField};
 use sails_rs::{collections::HashMap, prelude::*};
 
 pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {

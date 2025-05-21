@@ -1,6 +1,5 @@
 use core::fmt::Debug;
-use gbuiltin_bls381::ark_ff::Field;
-use gstd::{debug, ext, format, msg};
+use gstd::{debug, ext, format};
 use sails_rs::collections::HashMap;
 use sails_rs::collections::HashSet;
 use sails_rs::prelude::*;
@@ -69,29 +68,41 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     }
 
     pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
-        if self.active_ids.is_empty() {
+        let len = self.active_ids.len();
+        if len == 0 || n == 0 {
             return None;
         }
-
+    
+        let mut idx = if self.turn_index == 0 {
+            self.active_ids.len() - 1
+        } else {
+            (self.turn_index - 1) as usize
+        };
+    
         for _ in 0..n {
             if self.active_ids.is_empty() {
-                break;
+                return None;
             }
-            let idx = self.turn_index as usize % self.active_ids.len();
+    
             self.active_ids.remove(idx);
-
-            // Не нужно инкрементировать turn_index, т.к. удалили текущего
-            if self.turn_index as usize >= self.active_ids.len() {
-                self.turn_index = 0;
+            if idx >= self.active_ids.len() {
+                idx = 0;
+            }
+    
+            if self.turn_index as usize > idx {
+                self.turn_index -= 1;
+            } else if self.turn_index as usize == idx && self.turn_index > 0 {
+                self.turn_index -= 1;
             }
         }
-
+    
         if self.active_ids.is_empty() {
-            return None;
+            None
+        } else {
+            let id = Some(self.active_ids[self.turn_index as usize].clone());
+            self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
+            id
         }
-
-        let next_id = self.active_ids[self.turn_index as usize].clone();
-        Some(next_id)
     }
 
     pub fn reset_turn_index(&mut self) {
