@@ -3,11 +3,13 @@ pragma circom 2.1.6;
 include "../common/elgamal.circom";
 
 template Decrypt() {
-    var numBits = 128;
+    var numBits = 64;
 
     signal input c0[3];
     signal input sk;
-    signal output m[3];
+    signal input expected[3]; 
+
+    signal output isValid;
 
     component decrypt = ElGamalDecrypt(numBits);
 
@@ -15,10 +17,13 @@ template Decrypt() {
     decrypt.c0[1] <== c0[1];
     decrypt.c0[2] <== c0[2];
     decrypt.sk <== sk;
+
+    decrypt.expected[0] <== expected[0];
+    decrypt.expected[1] <== expected[1];
+    decrypt.expected[2] <== expected[2];
    
-    m[0] <== decrypt.m[0];
-    m[1] <== decrypt.m[1];
-    m[2] <== decrypt.m[2];
+    isValid <== decrypt.isValid;
+    isValid === 1;
 }
 
 component main {public [c0]}  = Decrypt();

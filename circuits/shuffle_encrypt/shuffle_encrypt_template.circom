@@ -24,7 +24,6 @@ template ShuffleEncryptTemplate(baseX, baseY, numCards, numBits) {
     signal input permutation[numCards];
     signal output isValid;              // 1 if valid
 
-    signal output debugEncrypted[6][numCards];
     signal encrypted[6][numCards];
 
     component encrypt[numCards];
@@ -53,13 +52,6 @@ template ShuffleEncryptTemplate(baseX, baseY, numCards, numBits) {
         encrypted[3][i] <== encrypt[i].c1[0];
         encrypted[4][i] <== encrypt[i].c1[1];
         encrypted[5][i] <== encrypt[i].c1[2];
-
-        debugEncrypted[0][i] <== encrypted[0][i];
-        debugEncrypted[1][i] <== encrypted[1][i];
-        debugEncrypted[2][i] <== encrypted[2][i];
-        debugEncrypted[3][i] <== encrypted[3][i];
-        debugEncrypted[4][i] <== encrypted[4][i];
-        debugEncrypted[5][i] <== encrypted[5][i];
     }
 
     component perm = ApplyPermutation(6, numCards);
@@ -109,36 +101,31 @@ template ShuffleEncryptTemplate(baseX, baseY, numCards, numBits) {
     isValid === 1;
 }
 
+template ShuffleEncryptTemplateV2(baseX, baseY, numCards, numBits) {
+    signal input original[6][numCards]; // original matrix: [c0.X, c0.Y, c0.Z, c1.X, c1.Y, c1.Z]
+    signal input permuted[6][numCards]; // shuffled+encrypted matrix
+    signal input R[numCards];           // random scalars r_i
+    signal input pk[3];                 // aggregate public key
+    signal output isValid;              // 1 if valid
 
-template IsEqualProjective() {
-    signal input X1;
-    signal input Y1;
-    signal input Z1;
-    signal input X2;
-    signal input Y2;
-    signal input Z2;
+     
+   component check = BatchElGamalVerifyNoAlpha(numBits, baseX, baseY, numCards);
 
-    signal output isEqual;
+    for (var i = 0; i < 6; i++) {
+        for (var j = 0; j < numCards; j++) {
+            check.original[i][j] <== original[i][j];
+            check.encrypted[i][j] <== permuted[i][j];  
+        }
+    }
 
-    // Compute cross-multiplications
-    signal X1Z2;
-    signal X2Z1;
-    signal Y1Z2;
-    signal Y2Z1;
+    for (var i = 0; i < numCards; i++) {
+        check.R[i] <== R[i];
+    }
 
-    X1Z2 <== X1 * Z2;
-    X2Z1 <== X2 * Z1;
-    Y1Z2 <== Y1 * Z2;
-    Y2Z1 <== Y2 * Z1;
+    for (var i = 0; i < 3; i++) {
+        check.pk[i] <== pk[i];
+    }
 
-    // Compare results
-    component xEq = IsEqual();
-    xEq.in[0] <== X1Z2;
-    xEq.in[1] <== X2Z1;
+    isValid <== check.isValid;
 
-    component yEq = IsEqual();
-    yEq.in[0] <== Y1Z2;
-    yEq.in[1] <== Y2Z1;
-
-    isEqual <== xEq.out * yEq.out;
 }

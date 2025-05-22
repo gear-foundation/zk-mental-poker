@@ -7,7 +7,7 @@ export type EC = any;
 
 /// Computes ElGamal Encryption.
 export function elgamalEncrypt(F: any, a: bigint, d: bigint, G: any, pk: any, msg: any) {
-  const r = generateRandomScalar(128);
+  const r = generateRandomScalar(50);
   const rG = scalarMul(F, a, d, G, r);
   const rPK = scalarMul(F, a, d, pk, r);
   const c0 = projectiveAdd(F, a, d, rG, { ...msg.ic0 });

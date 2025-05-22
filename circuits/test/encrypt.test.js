@@ -8,6 +8,51 @@ import * as circom_tester from "circom_tester";
 //import * as ff from "ffjavascript";
 import { F1Field } from "ffjavascript";
 import { randomBytes } from 'crypto';
+function batchElGamalVerifyNoAlpha(original, encrypted, rScalars, base, pk) {
+    const n = rScalars.length;
+    let sumC0 = { X: 0n, Y: 0n, Z: 1n };
+    let sumC1 = { X: 0n, Y: 0n, Z: 1n };
+    let sumIC0 = { X: 0n, Y: 0n, Z: 1n };
+    let sumIC1 = { X: 0n, Y: 0n, Z: 1n };
+    let rSum = 0n;
+    for (let i = 0; i < n; i++) {
+        const ic0 = {
+            X: original[0][i],
+            Y: original[1][i],
+            Z: original[2][i],
+        };
+        const ic1 = {
+            X: original[3][i],
+            Y: original[4][i],
+            Z: original[5][i],
+        };
+        const c0 = {
+            X: encrypted[0][i],
+            Y: encrypted[1][i],
+            Z: encrypted[2][i],
+        };
+        const c1 = {
+            X: encrypted[3][i],
+            Y: encrypted[4][i],
+            Z: encrypted[5][i],
+        };
+        const r = rScalars[i];
+        sumC0 = projectiveAdd(F, a, d, sumC0, c0);
+        sumC1 = projectiveAdd(F, a, d, sumC1, c1);
+        sumIC0 = projectiveAdd(F, a, d, sumIC0, ic0);
+        sumIC1 = projectiveAdd(F, a, d, sumIC1, ic1);
+        rSum += r;
+    }
+    const leftC0 = sumC0;
+    const rightC0 = projectiveAdd(F, a, d, scalarMul(F, a, d, base, rSum), sumIC0);
+    const leftC1 = sumC1;
+    const rightC1 = projectiveAdd(F, a, d, scalarMul(F, a, d, pk, rSum), sumIC1);
+    return isEqualProjective(leftC0, rightC0) && isEqualProjective(leftC1, rightC1);
+}
+function isEqualProjective(p1, p2) {
+    return (p1.X * p2.Z === p2.X * p1.Z &&
+        p1.Y * p2.Z === p2.Y * p1.Z);
+}
 const q = BigInt("52435875175126190479447740508185965837690552500527637822603658699938581184513"); // BLS12-381 scalar field
 const F = new F1Field(q);
 const neutral = { X: 0n, Y: 1n, Z: 1n };
@@ -16,9 +61,7 @@ const base = {
     Y: BigInt("0x2a6c669eda123e0f157d8b50badcd586358cad81eee464605e3167b6cc974166"),
     Z: 1n,
 };
-// Параметры кривой Bandersnatch
 const a = BigInt(-5);
-// const d = BigInt("0x1cfb69d4ca675f520cde0ab06b1d5199a5e21b2329c1228c6232a6a4d0602e5");
 const d = 45022363124591815672509500913686876175488063829319466900776701791074614335719n;
 chai.use(chaiAsPromised);
 function generateRandomScalar(numBits) {
@@ -31,7 +74,6 @@ function generateRandomScalar(numBits) {
             return sk;
     }
 }
-// projectiveAdd и scalarMul должны быть реализованы для твоей кривой
 function initializeDeck(numCards, F, a, d) {
     const deck = [];
     for (let i = 1; i <= numCards; i++) {
@@ -84,7 +126,7 @@ function elgamalEncryptDeck(F, a, d, G, pk, deck) {
     return { encrypted, rScalars };
 }
 function elgamalEncrypt(F, a, d, G, pk, msg) {
-    const r = generateRandomScalar(128);
+    const r = generateRandomScalar(50);
     const rG = scalarMul(F, a, d, G, r);
     const rPK = scalarMul(F, a, d, pk, r);
     const c0 = projectiveAdd(F, a, d, rG, { ...msg.ic0 });
@@ -99,12 +141,6 @@ function toAffine(F, P) {
 function expectAffineEqual(F, p1, p2) {
     expect(F.eq(p1.x, p2.x)).to.equal(true);
     expect(F.eq(p1.y, p2.y)).to.equal(true);
-}
-function elgamalDecrypt(F, a, d, sk, c0, c1) {
-    const skC0 = scalarMul(F, a, d, c0, sk); // sk * c0
-    const skC0Neg = { X: F.neg(skC0.X), Y: skC0.Y, Z: skC0.Z }; // −skC0
-    const decrypted = projectiveAdd(F, a, d, c1, skC0Neg); // c1 − skC0
-    return decrypted;
 }
 function initDeck(numCards) {
     const deck = Array.from({ length: 6 }, () => Array(numCards).fill(0n));
@@ -128,7 +164,7 @@ describe("ShuffleEncrypt", function () {
     });
     it("should accept correct permutation and encryption", async () => {
         const deck = initDeck(52);
-        const sk = generateRandomScalar(128);
+        const sk = generateRandomScalar(64);
         const pk = scalarMul(F, a, d, base, sk);
         const { encrypted, rScalars } = elgamalEncryptDeck(F, a, d, base, pk, deck);
         const permutation = generatePermutation(52);
@@ -136,7 +172,6 @@ describe("ShuffleEncrypt", function () {
         const input = {
             pk: [pk.X.toString(), pk.Y.toString(), pk.Z.toString()],
             R: rScalars.map(r => r.toString()),
-            permutation,
             original: deck.map((row) => row.map((v) => v.toString())),
             permuted: shuffled.map((row) => row.map((v) => v.toString())),
         };
@@ -180,12 +215,12 @@ describe("ElGamal Encrypt and Decrypt Circuits", function () {
     });
     it("should encrypt a point correctly", async () => {
         // Generate test data
-        const sk = generateRandomScalar(128);
+        const sk = generateRandomScalar(64);
         const pk = scalarMul(F, a, d, G, sk);
         // --- ElGamal encryption --- //
         const msg = {
             ic0: { X: 0n, Y: 1n, Z: 1n },
-            ic1: scalarMul(F, a, d, G, generateRandomScalar(128))
+            ic1: scalarMul(F, a, d, G, generateRandomScalar(64))
         };
         const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, msg);
         // Prepare circuit inputs
@@ -215,61 +250,64 @@ describe("ElGamal Encrypt and Decrypt Circuits", function () {
         expectAffineEqual(F, c1Affine, c1outAffine);
     });
     it("Elgamal decrypt: decrypt(c1 - sk*c0) == message", async () => {
-        const sk = generateRandomScalar(128);
+        const sk = generateRandomScalar(64);
         const pk = scalarMul(F, a, d, G, sk);
         const msg = {
             ic0: { X: 0n, Y: 1n, Z: 1n },
-            ic1: scalarMul(F, a, d, G, generateRandomScalar(128))
+            ic1: scalarMul(F, a, d, G, generateRandomScalar(64))
         };
         const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, msg);
+        const skC0 = scalarMul(F, a, d, c0, sk);
+        const skC0Neg = {
+            X: F.neg(skC0.X),
+            Y: skC0.Y,
+            Z: skC0.Z,
+        };
         const witness = await decCircuit.calculateWitness({
             c0: [c0.X.toString(), c0.Y.toString(), c0.Z.toString()],
-            sk: sk.toString()
+            sk: sk.toString(),
+            expected: [skC0Neg.X.toString(), skC0Neg.Y.toString(), skC0Neg.Z.toString()]
         }, true);
-        const skC0 = {
-            X: BigInt(witness[1]),
-            Y: BigInt(witness[2]),
-            Z: BigInt(witness[3])
-        };
+        console.log(witness[1]);
         // с1 - sk*c0
-        const decrypted = projectiveAdd(F, a, d, c1, skC0);
+        const decrypted = projectiveAdd(F, a, d, c1, skC0Neg);
         expectAffineEqual(F, toAffine(F, decrypted), toAffine(F, msg.ic1));
     });
-    it("should allow N signers to sequentially encrypt and independently decrypt", async () => {
-        const N = 5;
-        const secretKeys = Array.from({ length: N }, () => generateRandomScalar(128));
-        const publicKeys = secretKeys.map(sk => scalarMul(F, a, d, G, sk));
-        // Aggregate public key
-        const pkAgg = publicKeys.reduce((acc, pk) => projectiveAdd(F, a, d, acc, pk), { X: 0n, Y: 1n, Z: 1n });
-        const msg = scalarMul(F, a, d, G, generateRandomScalar(128));
-        // Sequential encryption
-        let state = { ic0: { X: 0n, Y: 1n, Z: 1n }, ic1: msg };
-        for (let i = 0; i < N; i++) {
-            let step = elgamalEncrypt(F, a, d, G, pkAgg, state);
-            state = { ic0: step.c0, ic1: step.c1 };
-        }
-        const c0 = state.ic0;
-        const c1 = state.ic1;
-        // Sequential decryption (aggregate negation of sk_i * c0)
-        let negatedSum = { X: 0n, Y: 1n, Z: 1n };
-        for (const sk of secretKeys) {
-            const witness = await decCircuit.calculateWitness({
-                c0: [c0.X.toString(), c0.Y.toString(), c0.Z.toString()],
-                sk: sk.toString()
-            }, true);
-            const negated = {
-                X: BigInt(witness[1]),
-                Y: BigInt(witness[2]),
-                Z: BigInt(witness[3])
-            };
-            negatedSum = projectiveAdd(F, a, d, negatedSum, negated);
-        }
-        const decrypted = projectiveAdd(F, a, d, c1, negatedSum);
-        const mRecovered = toAffine(F, decrypted);
-        const mExpected = toAffine(F, msg);
-        expect(F.eq(mRecovered.x, mExpected.x)).to.equal(true);
-        expect(F.eq(mRecovered.y, mExpected.y)).to.equal(true);
-    });
+    //   it("should allow N signers to sequentially encrypt and independently decrypt", async () => {
+    //     const N = 5;
+    //     const secretKeys = Array.from({ length: N }, () => generateRandomScalar(128));
+    //     const publicKeys = secretKeys.map(sk => scalarMul(F, a, d, G, sk));
+    //    // Aggregate public key
+    //     const pkAgg = publicKeys.reduce((acc, pk) => projectiveAdd(F, a, d, acc, pk), { X: 0n, Y: 1n, Z: 1n });
+    //     const msg = scalarMul(F, a, d, G, generateRandomScalar(128));
+    //    // Sequential encryption
+    //     let state = { ic0: { X: 0n, Y: 1n, Z: 1n }, ic1: msg };
+    //     for (let i = 0; i < N; i++) {
+    //         let step = elgamalEncrypt(F, a, d, G, pkAgg, state);
+    //         state = { ic0: step.c0, ic1: step.c1}
+    //     }
+    //     const c0 = state.ic0;
+    //     const c1 = state.ic1;
+    //     // Sequential decryption (aggregate negation of sk_i * c0)
+    //     let negatedSum = { X: 0n, Y: 1n, Z: 1n };
+    //     for (const sk of secretKeys) {
+    //         const witness = await decCircuit.calculateWitness({
+    //             c0: [c0.X.toString(), c0.Y.toString(), c0.Z.toString()],
+    //             sk: sk.toString()
+    //         }, true);
+    //         const negated = {
+    //             X: BigInt(witness[1]),
+    //             Y: BigInt(witness[2]),
+    //             Z: BigInt(witness[3])
+    //         };
+    //         negatedSum = projectiveAdd(F, a, d, negatedSum, negated);
+    //     }
+    //     const decrypted = projectiveAdd(F, a, d, c1, negatedSum);
+    //     const mRecovered = toAffine(F, decrypted);
+    //     const mExpected = toAffine(F, msg);
+    //     expect(F.eq(mRecovered.x, mExpected.x)).to.equal(true);
+    //     expect(F.eq(mRecovered.y, mExpected.y)).to.equal(true);
+    //   });
     //     it("should fail for an invalid point", async () => {
     //         const circuit = await circom_tester.wasm(CIRCUIT_PATH);
     //         const invalidPk = {

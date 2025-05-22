@@ -6,7 +6,8 @@ BUILD_DIR="build"
 COMMON_DIR="common"
 
 CIRCUIT_FILES=(
-    "decrypt/decrypt"
+ "shuffle_encrypt/shuffle_encrypt"
+  "decrypt/decrypt"
   "test/test_elgamal_encrypt"
   "test/test_elgamal_decrypt"
   "test/test_bandersnatch_add"
