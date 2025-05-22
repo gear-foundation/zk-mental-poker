@@ -6,7 +6,8 @@ fn main() {
     let idl_file_path = out_dir_path.join("poker_factory.idl");
 
     // Generate IDL file for the program
-    sails_idl_gen::generate_idl_to_file::<poker_factory_app::PokerFactoryProgram>(&idl_file_path).unwrap();
+    sails_idl_gen::generate_idl_to_file::<poker_factory_app::PokerFactoryProgram>(&idl_file_path)
+        .unwrap();
 
     // Generate client code from IDL file
     ClientGenerator::from_idl_path(&idl_file_path)

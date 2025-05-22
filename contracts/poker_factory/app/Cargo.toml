@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 sails-rs = "0.8.0"
 gstd = "1.8.0"
+poker-client = { path = "../../poker/client" }

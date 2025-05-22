@@ -3,19 +3,23 @@
 #![allow(static_mut_refs)]
 mod services;
 use crate::services::{Config, PokerFactoryService};
+use poker_client::{PublicKey, VerifyingKeyBytes};
 use sails_rs::ActorId;
-
 pub struct PokerFactoryProgram(());
 
 #[sails_rs::program]
 impl PokerFactoryProgram {
-    pub fn new(config: Config, pts_actor_id: ActorId) -> Self {
-        PokerFactoryService::init(config, pts_actor_id);
+    pub fn new(
+        config: Config,
+        pts_actor_id: ActorId,
+        vk_shuffle_bytes: VerifyingKeyBytes,
+        vk_decrypt_bytes: VerifyingKeyBytes,
+    ) -> Self {
+        PokerFactoryService::init(config, pts_actor_id, vk_shuffle_bytes, vk_decrypt_bytes);
         Self(())
     }
 
     pub fn poker_factory(&self) -> PokerFactoryService {
         PokerFactoryService::new()
     }
-
 }

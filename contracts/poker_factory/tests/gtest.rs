@@ -1,4 +1,7 @@
-use sails_rs::{calls::*, gtest::{calls::*, System}};
+use sails_rs::{
+    calls::*,
+    gtest::{System, calls::*},
+};
 
 use poker_factory_client::traits::*;
 

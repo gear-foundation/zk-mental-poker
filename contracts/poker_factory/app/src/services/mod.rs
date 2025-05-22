@@ -1,8 +1,8 @@
-use sails_rs::prelude::*;
-use sails_rs::gstd::msg;
-use sails_rs::collections::{HashMap, HashSet};
 use gstd::prog::ProgramGenerator;
-
+use poker_client::{VerifyingKeyBytes, PublicKey};
+use sails_rs::collections::{HashMap, HashSet};
+use sails_rs::gstd::msg;
+use sails_rs::prelude::*;
 mod utils;
 use crate::services::utils::panic;
 
@@ -12,6 +12,8 @@ struct Storage {
     admins: HashSet<ActorId>,
     config: Config,
     pts_actor_id: ActorId,
+    vk_shuffle_bytes: VerifyingKeyBytes,
+    vk_decrypt_bytes: VerifyingKeyBytes,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -42,26 +44,33 @@ static mut STORAGE: Option<Storage> = None;
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub enum Event {
-    LobbyCreated{
+    LobbyCreated {
         lobby_address: ActorId,
         admin: ActorId,
         lobby_config: LobbyConfig,
     },
     LobbyDeleted {
         lobby_address: ActorId,
-    }
+    },
 }
 
 pub struct PokerFactoryService(());
 
 impl PokerFactoryService {
-    pub fn init(config: Config, pts_actor_id: ActorId) -> Self {
+    pub fn init(
+        config: Config,
+        pts_actor_id: ActorId,
+        vk_shuffle_bytes: VerifyingKeyBytes,
+        vk_decrypt_bytes: VerifyingKeyBytes,
+    ) -> Self {
         unsafe {
             STORAGE = Some(Storage {
                 admins: HashSet::from([msg::source()]),
                 config,
                 lobbies: HashMap::new(),
                 pts_actor_id,
+                vk_shuffle_bytes,
+                vk_decrypt_bytes,
             });
         }
         Self(())
@@ -80,10 +89,18 @@ impl PokerFactoryService {
         Self(())
     }
 
-    pub async fn create_lobby(&mut self, init_lobby: LobbyConfig) {
+    pub async fn create_lobby(&mut self, init_lobby: LobbyConfig, pk: PublicKey) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-        let payload = ["New".encode(), init_lobby.encode()].concat();
+        let payload = [
+            "New".encode(),
+            init_lobby.encode(),
+            storage.pts_actor_id.encode(),
+            pk.encode(),
+            storage.vk_shuffle_bytes.encode(),
+            storage.vk_decrypt_bytes.encode(),
+        ]
+        .concat();
         let create_program_future = ProgramGenerator::create_program_bytes_with_gas_for_reply(
             storage.config.lobby_code_id,
             payload,
@@ -93,17 +110,16 @@ impl PokerFactoryService {
         )
         .unwrap_or_else(|e| panic(e));
 
-        let (lobby_address, _) = create_program_future
-            .await
-            .unwrap_or_else(|e| panic(e));
-        
+        let (lobby_address, _) = create_program_future.await.unwrap_or_else(|e| panic(e));
+
         storage.lobbies.insert(lobby_address, init_lobby.clone());
 
         self.emit_event(Event::LobbyCreated {
             lobby_address,
             admin: msg_src,
             lobby_config: init_lobby,
-        }).expect("Notification Error");
+        })
+        .expect("Notification Error");
     }
 
     pub async fn delete_lobby(&mut self, lobby_address: ActorId) {
@@ -115,13 +131,11 @@ impl PokerFactoryService {
         }
         storage.lobbies.remove(&lobby_address);
 
-        self.emit_event(Event::LobbyDeleted {
-            lobby_address,
-
-        }).expect("Notification Error");
+        self.emit_event(Event::LobbyDeleted { lobby_address })
+            .expect("Notification Error");
     }
 
     pub fn pts_actor_id(&self) -> ActorId {
         self.get().pts_actor_id
-    }    
+    }
 }
