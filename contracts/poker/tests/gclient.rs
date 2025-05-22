@@ -3,9 +3,9 @@ use std::{thread::sleep, time};
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
-use utils_gclient::*;
 use gclient::EventProcessor;
-use poker_client::{Status, Action, BettingStage, Participant};
+use poker_client::{Action, BettingStage, Participant, Status};
+use utils_gclient::*;
 
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {
@@ -85,7 +85,13 @@ async fn test_time_limit() -> Result<()> {
     assert_eq!(stage, None::<BettingStage>);
     println!("stage: {:?}", stage);
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    assert_eq!(status, Status::Finished { winners: vec![], cash_prize: vec![] });
+    assert_eq!(
+        status,
+        Status::Finished {
+            winners: vec![],
+            cash_prize: vec![]
+        }
+    );
     println!("status: {:?}", status);
     Ok(())
 }

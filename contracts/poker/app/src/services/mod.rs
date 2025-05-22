@@ -6,7 +6,9 @@ use utils::*;
 mod curve;
 mod utils;
 mod verify;
-use crate::services::curve::{decrypt_point, init_deck_and_card_map};
+use crate::services::curve::{
+    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
+};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
@@ -147,7 +149,7 @@ pub enum Event {
 pub struct PokerService(());
 
 impl PokerService {
-    pub async fn init(
+    pub fn init(
         config: Config,
         pts_actor_id: ActorId,
         pk: PublicKey,
@@ -488,7 +490,7 @@ impl PokerService {
 
             if let Some(betting) = &mut storage.betting {
                 betting.last_active_time = Some(exec::block_timestamp());
-            } 
+            }
         }
     }
 
@@ -535,12 +537,16 @@ impl PokerService {
 
         let betting = storage.betting.as_mut().expect("Betting must exist");
 
-        let last_active_time = betting.last_active_time.expect("Last active time must be exist");
+        let last_active_time = betting
+            .last_active_time
+            .expect("Last active time must be exist");
         let current_time = exec::block_timestamp();
         let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
         debug!("number_of_passes: {:?}", number_of_passes);
         if number_of_passes != 0 {
-            let current_turn_player_id = storage.active_participants.skip_and_remove(number_of_passes);
+            let current_turn_player_id = storage
+                .active_participants
+                .skip_and_remove(number_of_passes);
 
             if let Some(current_turn_player_id) = current_turn_player_id {
                 debug!("current_turn_player_id: {:?}", current_turn_player_id);
@@ -561,7 +567,6 @@ impl PokerService {
                 panic!("Not your turn!");
             }
         }
-        
 
         let participant = storage.participants.get_mut(&player).unwrap();
         // Process the player's action
@@ -826,7 +831,18 @@ impl PokerService {
 
     // Query
     pub fn player_cards(&self, player_id: ActorId) -> Option<[EncryptedCard; 2]> {
-        self.get().partially_decrypted_cards.get(&player_id).cloned()
+        self.get()
+            .partially_decrypted_cards
+            .get(&player_id)
+            .cloned()
+    }
+
+    pub fn encrypted_table_cards(&self) -> Vec<EncryptedCard> {
+        self.get().table_cards.clone()
+    }
+
+    pub fn revealed_table_cards(&self) -> Vec<Card> {
+        self.get().revealed_table_cards.clone()
     }
 
     pub fn participants(&self) -> Vec<(ActorId, Participant)> {

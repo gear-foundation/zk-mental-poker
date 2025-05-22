@@ -200,9 +200,6 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     println!("DECRYPT");
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (cards_by_actor, decrypt_proofs));
     assert!(listener.message_processed(message_id).await?.succeed());
-<<<<<<< HEAD
-    Ok(program_id)
-=======
 
     let card_map = init_deck_and_card_map();
     for (_, sk, id) in pk_to_actor_id.iter() {
@@ -219,7 +216,6 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
         }
     }
     Ok(())
->>>>>>> 3202705 (added tests for card decryptions)
 }
 
 fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {

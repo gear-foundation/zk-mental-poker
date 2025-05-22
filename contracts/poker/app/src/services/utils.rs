@@ -72,30 +72,30 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         if len == 0 || n == 0 {
             return None;
         }
-    
+
         let mut idx = if self.turn_index == 0 {
             self.active_ids.len() - 1
         } else {
             (self.turn_index - 1) as usize
         };
-    
+
         for _ in 0..n {
             if self.active_ids.is_empty() {
                 return None;
             }
-    
+
             self.active_ids.remove(idx);
             if idx >= self.active_ids.len() {
                 idx = 0;
             }
-    
+
             if self.turn_index as usize > idx {
                 self.turn_index -= 1;
             } else if self.turn_index as usize == idx && self.turn_index > 0 {
                 self.turn_index -= 1;
             }
         }
-    
+
         if self.active_ids.is_empty() {
             None
         } else {

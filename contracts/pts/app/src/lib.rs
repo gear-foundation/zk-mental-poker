@@ -42,7 +42,7 @@ pub enum Event {
         from: ActorId,
         to: ActorId,
         amount: u128,
-    }
+    },
 }
 
 impl PtsService {
@@ -74,10 +74,7 @@ impl PtsService {
     pub fn get_accural(&mut self) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-        let (balance, last_time) = storage
-            .balances
-            .entry(msg_src)
-            .or_insert((0, 0));
+        let (balance, last_time) = storage.balances.entry(msg_src).or_insert((0, 0));
         let current_time = exec::block_timestamp();
         if current_time - *last_time < storage.time_ms_between_balance_receipt {
             panic!("Time has not yet expired");
@@ -88,7 +85,7 @@ impl PtsService {
             id: msg_src,
             accrual: storage.accrual,
         })
-            .expect("Notification Error");
+        .expect("Notification Error");
     }
 
     pub fn transfer(&mut self, from: ActorId, to: ActorId, amount: u128) {
@@ -107,19 +104,13 @@ impl PtsService {
 
         *from_balance = from_balance.checked_sub(amount).expect("Low balance");
 
-        let (to_balance, _last_time) = storage
-            .balances
-            .entry(to)
-            .or_insert((0, 0));
+        let (to_balance, _last_time) = storage.balances.entry(to).or_insert((0, 0));
         *to_balance = to_balance.checked_add(amount).expect("Overflow");
 
-        self.emit_event(Event::Transfered {
-            from,
-            to,
-            amount,
-        }).expect("Notification Error");
+        self.emit_event(Event::Transfered { from, to, amount })
+            .expect("Notification Error");
     }
-    
+
     pub fn add_admin(&mut self, new_admin: ActorId) {
         let storage = self.get_mut();
         if !storage.admins.contains(&msg::source()) {
@@ -173,14 +164,21 @@ impl PtsService {
     }
 
     pub fn get_balance(&self, id: ActorId) -> u128 {
-        let (balance, _) = self.get().balances.get(&id).expect("Actor id must be exist");
+        let (balance, _) = self
+            .get()
+            .balances
+            .get(&id)
+            .expect("Actor id must be exist");
         *balance
     }
     pub fn get_remaining_time_ms(&self, id: ActorId) -> u64 {
-        let (_, last_time) = self.get().balances.get(&id).expect("Actor id must be exist");
+        let (_, last_time) = self
+            .get()
+            .balances
+            .get(&id)
+            .expect("Actor id must be exist");
         exec::block_timestamp() - last_time
     }
-
 }
 
 pub struct PtsProgram(());
