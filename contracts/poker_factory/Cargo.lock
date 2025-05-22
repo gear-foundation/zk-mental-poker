@@ -3853,6 +3853,7 @@ version = "0.1.0"
 dependencies = [
  "gstd",
  "poker-client",
+ "pts-client",
  "sails-rs",
 ]
 

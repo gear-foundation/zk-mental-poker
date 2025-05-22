@@ -285,17 +285,6 @@ impl PokerService {
             panic("Wrong status");
         }
 
-        let request = pts_io::Transfer::encode_call(
-            storage.config.admin_id,
-            exec::program_id(),
-            storage.config.starting_bank,
-        );
-
-        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
-            .expect("Error in async message to PTS contract")
-            .await
-            .expect("PTS: Error transfer points to contract");
-
         self.deal_player_cards();
 
         let sb_player = storage

@@ -5,6 +5,8 @@ use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
 mod utils;
 use crate::services::utils::panic;
+use pts_client::pts::io as pts_io;
+use sails_rs::calls::ActionIo;
 
 #[derive(Debug, Clone)]
 struct Storage {
@@ -92,6 +94,20 @@ impl PokerFactoryService {
     pub async fn create_lobby(&mut self, init_lobby: LobbyConfig, pk: PublicKey) {
         let storage = self.get_mut();
         let msg_src = msg::source();
+
+        let request = pts_io::GetBalance::encode_call(msg_src);
+
+        let bytes_reply_balance = msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error getting balance from the contract");
+
+        let balance: u128 = pts_io::GetBalance::decode_reply(bytes_reply_balance).unwrap();
+
+        if balance < init_lobby.starting_bank {
+            panic!("Low pts balance");
+        }
+
         let payload = [
             "New".encode(),
             init_lobby.encode(),
@@ -111,6 +127,24 @@ impl PokerFactoryService {
         .unwrap_or_else(|e| panic(e));
 
         let (lobby_address, _) = create_program_future.await.unwrap_or_else(|e| panic(e));
+
+        let request = pts_io::AddAdmin::encode_call(lobby_address);
+
+        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error adding new admin");
+
+        let request = pts_io::Transfer::encode_call(
+            msg_src,
+            lobby_address,
+            init_lobby.starting_bank,
+        );
+
+        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error transfer points to contract");
 
         storage.lobbies.insert(lobby_address, init_lobby.clone());
 
