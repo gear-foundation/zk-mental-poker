@@ -73,6 +73,25 @@ pub fn load_player_public_keys(path: &str) -> Vec<(usize, PublicKey)> {
         .collect()
 }
 
+#[derive(Debug, Deserialize)]
+struct SecretKeyJson {
+    index: usize,
+    sk: String,
+}
+
+pub fn load_player_secret_keys(path: &str) -> Vec<(usize, ark_ed_on_bls12_381_bandersnatch::Fr)> {
+    let raw = fs::read_to_string(path).expect("failed to read player_sks.json");
+    let json: Vec<SecretKeyJson> = serde_json::from_str(&raw).expect("invalid JSON");
+
+    json.into_iter()
+        .map(|entry| {
+            let sk_biguint = BigUint::from_str(&entry.sk).expect("invalid bigint string");
+            let sk_bytes = sk_biguint.to_bytes_le();
+            let sk_fr = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
+            (entry.index, sk_fr)
+        })
+        .collect()
+}
 fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
     let n = BigUint::from_str_radix(s, 10).expect("invalid decimal");
     let b = n.to_bytes_be();

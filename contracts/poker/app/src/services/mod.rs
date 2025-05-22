@@ -6,9 +6,7 @@ use utils::*;
 mod curve;
 mod utils;
 mod verify;
-use crate::services::curve::{
-    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
-};
+use crate::services::curve::{decrypt_point, init_deck_and_card_map};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
@@ -149,8 +147,13 @@ pub enum Event {
 pub struct PokerService(());
 
 impl PokerService {
-    pub fn init(config: Config, pts_actor_id: ActorId, pk: PublicKey, vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
-
+    pub async fn init(
+        config: Config,
+        pts_actor_id: ActorId,
+        pk: PublicKey,
+        vk_shuffle_bytes: VerifyingKeyBytes,
+        vk_decrypt_bytes: VerifyingKeyBytes,
+    ) -> Self {
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
@@ -280,7 +283,11 @@ impl PokerService {
             panic("Wrong status");
         }
 
-        let request = pts_io::Transfer::encode_call(storage.config.admin_id, exec::program_id(), storage.config.starting_bank);
+        let request = pts_io::Transfer::encode_call(
+            storage.config.admin_id,
+            exec::program_id(),
+            storage.config.starting_bank,
+        );
 
         msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
             .expect("Error in async message to PTS contract")
@@ -298,12 +305,18 @@ impl PokerService {
         if participant.balance <= storage.config.small_blind {
             storage.active_participants.remove(&sb_player);
             storage.all_in_players.push(sb_player);
-            storage.already_invested_in_the_circle.insert(sb_player, participant.balance);
+            storage
+                .already_invested_in_the_circle
+                .insert(sb_player, participant.balance);
             storage.betting_bank.insert(sb_player, participant.balance);
             participant.balance = 0;
         } else {
-            storage.already_invested_in_the_circle.insert(sb_player, storage.config.small_blind);
-            storage.betting_bank.insert(sb_player, storage.config.small_blind);
+            storage
+                .already_invested_in_the_circle
+                .insert(sb_player, storage.config.small_blind);
+            storage
+                .betting_bank
+                .insert(sb_player, storage.config.small_blind);
             participant.balance -= storage.config.small_blind;
         }
 
@@ -317,15 +330,20 @@ impl PokerService {
         if participant.balance <= storage.config.big_blind {
             storage.active_participants.remove(&bb_player);
             storage.all_in_players.push(bb_player);
-            storage.already_invested_in_the_circle.insert(bb_player, participant.balance);
+            storage
+                .already_invested_in_the_circle
+                .insert(bb_player, participant.balance);
             storage.betting_bank.insert(bb_player, participant.balance);
             participant.balance = 0;
         } else {
-            storage.already_invested_in_the_circle.insert(bb_player, storage.config.big_blind);
-            storage.betting_bank.insert(bb_player, storage.config.big_blind);
+            storage
+                .already_invested_in_the_circle
+                .insert(bb_player, storage.config.big_blind);
+            storage
+                .betting_bank
+                .insert(bb_player, storage.config.big_blind);
             participant.balance -= storage.config.big_blind;
         }
-
 
         storage.betting = Some(BettingStage {
             turn: storage
@@ -485,7 +503,6 @@ impl PokerService {
         for (id, bet) in storage.betting_bank.iter() {
             let participant = storage.participants.get_mut(id).unwrap();
             participant.balance += *bet;
-
         }
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingStart;
@@ -809,7 +826,7 @@ impl PokerService {
 
     // Query
     pub fn player_cards(&self, player_id: ActorId) -> Option<[EncryptedCard; 2]> {
-        self.get().encrypted_cards.get(&player_id).cloned()
+        self.get().partially_decrypted_cards.get(&player_id).cloned()
     }
 
     pub fn participants(&self) -> Vec<(ActorId, Participant)> {
