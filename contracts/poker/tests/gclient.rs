@@ -1,14 +1,17 @@
 use std::{thread::sleep, time};
 
+use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
 use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proofs};
 use gclient::EventProcessor;
-use poker_client::{Action, BettingStage, Participant, Status};
+use poker_client::{Action, BettingStage, Participant, Status, Stage};
 use sails_rs::CodeId;
 use sails_rs::TypeInfo;
 use utils_gclient::*;
+use gear_core::ids::ProgramId;
+
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let pks = load_player_public_keys("tests/test_data/player_pks.json");
@@ -163,49 +166,50 @@ async fn test_basic_function() -> Result<()> {
 
     let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
 
-    // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    // println!("status: {:?}", status);
-    // let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    // println!("bank: {:?}", bank);
-    // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    // println!("stage: {:?}", stage);
-    // let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    // println!("participants: {:?}", participants);
-
-    let api = api
+    let api_0 = api
+        .clone()
+        .with(USERS_STR[0])
+        .expect("Unable to change signer.");
+    let api_1 = api
+        .clone()
+        .with(USERS_STR[1])
+        .expect("Unable to change signer.");
+    let api_2 = api
         .clone()
         .with(USERS_STR[2])
         .expect("Unable to change signer.");
 
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
     assert!(listener.message_processed(message_id).await?.succeed());
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
     println!("stage: {:?}", stage);
-    let api = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
 
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
     assert!(listener.message_processed(message_id).await?.succeed());
+
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
     println!("stage: {:?}", stage);
-    let api = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
 
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
+    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterPreFlop});
     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
     println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
     println!("stage: {:?}", stage);
+
+    assert_eq!(stage.last_active_time, None);
+    assert_eq!(stage.acted_players, vec![]);
+    assert_eq!(stage.current_bet, 0);
+
     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
     println!("participants: {:?}", participants);
+    assert_eq!(participants[0].1.balance, 990);
+    assert_eq!(participants[1].1.balance, 990);
+    assert_eq!(participants[2].1.balance, 990);
 
     // decrypt table cards
     let table_cards_proofs =
@@ -224,6 +228,57 @@ async fn test_basic_function() -> Result<()> {
         }
     }
 
+    // Flop
+    // check: Raise -> Raise -> Call -> Call
+
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    println!("status: {:?}", status);
+    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterFlop});
+    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+    println!("bank: {:?}", bank);
+    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+    println!("stage: {:?}", stage);
+
+    assert_eq!(stage.last_active_time, None);
+    assert_eq!(stage.acted_players, vec![]);
+    assert_eq!(stage.current_bet, 0);
+
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    println!("participants: {:?}", participants);
+    assert_eq!(participants[0].1.balance, 890);
+    assert_eq!(participants[1].1.balance, 890);
+    assert_eq!(participants[2].1.balance, 890);
+
+    // all_players_check(&api, &program_id, &mut listener).await?;
+    // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    // assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterFlop});
+
+    Ok(())
+}
+
+
+async fn all_players_check(api: &GearApi, program_id: &ProgramId, listener: &mut EventListener) -> Result<()>{
+    for i in 0..3 {
+        let api = api
+            .clone()
+            .with(USERS_STR[i])
+            .expect("Unable to change signer.");
+
+        let message_id = send_request!(api: &api, program_id: *program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+        assert!(listener.message_processed(message_id).await?.succeed());
+    }
     Ok(())
 }
 

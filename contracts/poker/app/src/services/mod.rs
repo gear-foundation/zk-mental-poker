@@ -415,7 +415,7 @@ impl PokerService {
 
         let (base_index, expected_count, next_stage) = match &storage.status {
             Status::Play { stage } => match stage {
-                Stage::WaitingTableCardsAfterPreFlop => (0, 3, Stage::PreFlop),
+                Stage::WaitingTableCardsAfterPreFlop => (0, 3, Stage::Flop),
                 Stage::WaitingTableCardsAfterFlop => (3, 1, Stage::Turn),
                 Stage::WaitingTableCardsAfterTurn => (4, 1, Stage::River),
                 _ => panic("Not in a card decryption waiting stage"),
