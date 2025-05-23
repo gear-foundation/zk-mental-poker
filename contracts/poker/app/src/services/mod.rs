@@ -449,7 +449,7 @@ impl PokerService {
             .unwrap_or(false);
         if all_submitted {
             let mut revealed_cards = Vec::with_capacity(expected_count);
-            for i in 0..expected_count {
+            for i in base_index..base_index + expected_count {
                 let encrypted_card = &storage.table_cards[i];
 
                 let by_card = storage
