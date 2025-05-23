@@ -130,7 +130,10 @@ pub async fn init(
     Ok((pts_program_id, program_id))
 }
 
-pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Result<ProgramId> {
+pub async fn make_zk_actions(
+    api: &GearApi,
+    listener: &mut EventListener,
+) -> Result<(ProgramId, Vec<(PublicKey, Fr, ActorId, &'static str)>)> {
     let pks = load_player_public_keys("tests/test_data/player_pks.json");
     let sks = load_player_secret_keys("tests/test_data/player_sks.json");
     let proofs = load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
@@ -139,10 +142,10 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     let decrypt_proofs = load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
     let pk_cards = load_partial_decryptions("tests/test_data/partial_decryptions.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId)> = vec![];
+    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
     let api = get_new_client(&api, USERS_STR[0]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id));
+    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
 
     // Init
     let (pts_id, program_id) = init(&api, pks[0].1.clone(), listener).await?;
@@ -152,7 +155,7 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     let mut player_name = "Alice".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id));
+    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -162,7 +165,7 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     player_name = "Bob".to_string();
     let api = get_new_client(&api, USERS_STR[2]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[2].1.clone(), sks[2].1.clone(), id));
+    pk_to_actor_id.push((pks[2].1.clone(), sks[2].1.clone(), id, USERS_STR[2]));
 
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
@@ -190,8 +193,8 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
         .map(|(pk, cards)| {
             let id = pk_to_actor_id
                 .iter()
-                .find(|(pk1, _, _)| pk1 == &pk)
-                .map(|(_, _, id)| *id)
+                .find(|(pk1, _, _, _)| pk1 == &pk)
+                .map(|(_, _, id, _)| *id)
                 .expect("PublicKey not found");
             (id, cards)
         })
@@ -201,21 +204,21 @@ pub async fn make_zk_actions(api: &GearApi, listener: &mut EventListener) -> Res
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (cards_by_actor, decrypt_proofs));
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let card_map = init_deck_and_card_map();
-    for (_, sk, id) in pk_to_actor_id.iter() {
-        let result = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "PlayerCards", return_type: Option<[EncryptedCard; 2]>, payload: (id));
-        let encrypted_cards = result.unwrap();
+    // let card_map = init_deck_and_card_map();
+    // for (_, sk, id) in pk_to_actor_id.iter() {
+    //     let result = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "PlayerCards", return_type: Option<[EncryptedCard; 2]>, payload: (id));
+    //     let encrypted_cards = result.unwrap();
 
-        for card in encrypted_cards {
-            let c0_point = deserialize_bandersnatch_coords(&card.c0);
-            let c1_point = deserialize_bandersnatch_coords(&card.c1);
+    //     for card in encrypted_cards {
+    //         let c0_point = deserialize_bandersnatch_coords(&card.c0);
+    //         let c1_point = deserialize_bandersnatch_coords(&card.c1);
 
-            let sk_c0 = c0_point * sk;
-            let decrypted_point = c1_point - sk_c0;
-            println!("card {:?}", find_card_by_point(&card_map, &decrypted_point));
-        }
-    }
-    Ok(())
+    //         let sk_c0 = c0_point * sk;
+    //         let decrypted_point = c1_point - sk_c0;
+    //         println!("card {:?}", find_card_by_point(&card_map, &decrypted_point));
+    //     }
+    // }
+    Ok((program_id, pk_to_actor_id))
 }
 
 fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {

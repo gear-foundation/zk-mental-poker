@@ -286,6 +286,7 @@ impl PokerService {
         }
 
         self.deal_player_cards();
+        self.deal_table_cards(5);
 
         let sb_player = storage
             .active_participants
@@ -465,6 +466,8 @@ impl PokerService {
                 if let Some(card) =
                     decrypt_point(&storage.original_card_map, encrypted_card, partials)
                 {
+                    sails_rs::gstd::debug!("CARD {:?}", card.clone());
+
                     revealed_cards.push(card);
                 } else {
                     panic!("Failed to decrypt card");

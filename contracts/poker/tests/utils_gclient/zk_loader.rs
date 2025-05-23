@@ -13,6 +13,25 @@ use serde::Deserialize;
 use std::fs;
 use std::ops::Neg;
 use std::str::FromStr;
+#[derive(Debug, Deserialize)]
+struct PlayerDecryptions {
+    playerPubKey: ECPointJson,
+    decryptions: Vec<Decryption>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Decryption {
+    encryptedCard: EncryptedCardJson,
+    dec: ECPointJson,
+    proof: ProofJson,
+    publicSignals: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EncryptedCardJson {
+    c0: ECPointJson,
+    c1: ECPointJson,
+}
 
 #[derive(Debug, Deserialize)]
 struct PartialDecryptionCard {
@@ -42,7 +61,7 @@ struct ECPointJson {
     z: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ProofJson {
     pi_a: Vec<String>,
     pi_b: Vec<Vec<String>>,
@@ -124,6 +143,70 @@ pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
             }
         })
         .collect()
+}
+
+pub fn load_table_cards_proofs(
+    path: &str,
+) -> Vec<(
+    PublicKey,
+    (
+        Vec<(EncryptedCard, [Vec<u8>; 3])>,
+        Vec<VerificationVariables>,
+    ),
+)> {
+    let raw = fs::read_to_string(path).expect("Failed to read JSON file");
+    let parsed: Vec<PlayerDecryptions> = serde_json::from_str(&raw).expect("Invalid JSON");
+
+    let mut result = Vec::new();
+
+    for entry in parsed {
+        let player_key = PublicKey {
+            x: decimal_str_to_bytes_32(&entry.playerPubKey.x),
+            y: decimal_str_to_bytes_32(&entry.playerPubKey.y),
+            z: decimal_str_to_bytes_32(&entry.playerPubKey.z),
+        };
+        let mut decryptions = Vec::new();
+        let mut proofs = Vec::new();
+        for dec in entry.decryptions {
+            // Prepare encrypted card
+            let card = EncryptedCard {
+                c0: [
+                    from_decimal_string(&dec.encryptedCard.c0.x),
+                    from_decimal_string(&dec.encryptedCard.c0.y),
+                    from_decimal_string(&dec.encryptedCard.c0.z),
+                ],
+                c1: [
+                    from_decimal_string(&dec.encryptedCard.c1.x),
+                    from_decimal_string(&dec.encryptedCard.c1.y),
+                    from_decimal_string(&dec.encryptedCard.c1.z),
+                ],
+            };
+
+            let proof = Proof {
+                a: deserialize_g1(&dec.proof.pi_a),
+                b: deserialize_g2(&dec.proof.pi_b).expect("Invalid pi_b"),
+                c: deserialize_g1(&dec.proof.pi_c),
+            };
+
+            let public_inputs = parse_public_signals(&dec.publicSignals);
+
+            let dec = [
+                from_decimal_string(&dec.dec.x),
+                from_decimal_string(&dec.dec.y),
+                from_decimal_string(&dec.dec.z),
+            ];
+
+            proofs.push(VerificationVariables {
+                proof_bytes: encode_proof(&proof),
+                public_input: encode_inputs(&public_inputs),
+            });
+
+            decryptions.push((card, dec));
+        }
+        result.push((player_key, (decryptions, proofs)));
+    }
+
+    result
 }
 
 pub fn get_vkey(path: &str) -> VerifyingKeyBytes {

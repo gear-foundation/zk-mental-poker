@@ -5,9 +5,9 @@ use ark_ff::{BigInt, PrimeField};
 use sails_rs::{collections::HashMap, prelude::*};
 
 pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
-    let x = Fq::from_le_bytes_mod_order(&coords[0]);
-    let y = Fq::from_le_bytes_mod_order(&coords[1]);
-    let z = Fq::from_le_bytes_mod_order(&coords[2]);
+    let x = Fq::from_be_bytes_mod_order(&coords[0]);
+    let y = Fq::from_be_bytes_mod_order(&coords[1]);
+    let z = Fq::from_be_bytes_mod_order(&coords[2]);
     let t = x * y;
 
     EdwardsProjective::new(x, y, t, z)
