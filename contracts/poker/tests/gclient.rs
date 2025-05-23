@@ -6,11 +6,11 @@ use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
 use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proofs};
 use gclient::EventProcessor;
-use poker_client::{Action, BettingStage, Participant, Status, Stage};
+use gear_core::ids::ProgramId;
+use poker_client::{Action, BettingStage, Participant, Stage, Status, Card};
 use sails_rs::CodeId;
 use sails_rs::TypeInfo;
 use utils_gclient::*;
-use gear_core::ids::ProgramId;
 
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
@@ -195,7 +195,12 @@ async fn test_basic_function() -> Result<()> {
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
-    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterPreFlop});
+    assert_eq!(
+        status,
+        Status::Play {
+            stage: Stage::WaitingTableCardsAfterPreFlop
+        }
+    );
     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
     println!("bank: {:?}", bank);
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
@@ -211,7 +216,8 @@ async fn test_basic_function() -> Result<()> {
     assert_eq!(participants[1].1.balance, 990);
     assert_eq!(participants[2].1.balance, 990);
 
-    // decrypt table cards
+    // decrypt table cards (first 3 cards)
+    println!("decrypt 3 cards after preflop");
     let table_cards_proofs =
         load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
     for (pk, _, _, name) in pk_to_actor_id.iter() {
@@ -220,6 +226,8 @@ async fn test_basic_function() -> Result<()> {
             .find(|(stored_pk, _)| stored_pk == pk);
 
         if let Some((_, (decryptions, proofs))) = entry {
+            let decryptions: Vec<_> = decryptions[..3].to_vec();
+            let proofs: Vec<_> = proofs[..3].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
             assert!(listener.message_processed(message_id).await?.succeed());
@@ -227,6 +235,10 @@ async fn test_basic_function() -> Result<()> {
             panic!("No decryptions found for public key: {:?}", pk);
         }
     }
+
+    // get revealed cards
+    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+    println!("table_cards after preflop: {:?}", table_cards );
 
     // Flop
     // check: Raise -> Raise -> Call -> Call
@@ -245,7 +257,12 @@ async fn test_basic_function() -> Result<()> {
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
-    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterFlop});
+    assert_eq!(
+        status,
+        Status::Play {
+            stage: Stage::WaitingTableCardsAfterFlop
+        }
+    );
     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
     println!("bank: {:?}", bank);
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
@@ -261,15 +278,61 @@ async fn test_basic_function() -> Result<()> {
     assert_eq!(participants[1].1.balance, 890);
     assert_eq!(participants[2].1.balance, 890);
 
-    // all_players_check(&api, &program_id, &mut listener).await?;
-    // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    // assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterFlop});
+    // decrypt table cards (4th card)
+    println!("decrypt 1 card after flop");
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = table_cards_proofs
+            .iter()
+            .find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((_, (decryptions, proofs))) = entry {
+            let decryptions: Vec<_> = decryptions[3..4].to_vec();
+            let proofs: Vec<_> = proofs[3..4].to_vec();
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No decryptions found for public key: {:?}", pk);
+        }
+    }
+
+    // get revealed cards
+    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+    println!("table_cards after flop: {:?}", table_cards );
+
+    all_players_check(&api, &program_id, &mut listener).await?;
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterTurn});
+
+    println!("decrypt 1 card after turn");
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = table_cards_proofs
+            .iter()
+            .find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((_, (decryptions, proofs))) = entry {
+            let decryptions: Vec<_> = decryptions[4..5].to_vec();
+            let proofs: Vec<_> = proofs[4..5].to_vec();
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No decryptions found for public key: {:?}", pk);
+        }
+    }
+
+    // get revealed cards
+    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+    println!("table_cards after turn: {:?}", table_cards );
 
     Ok(())
 }
 
-
-async fn all_players_check(api: &GearApi, program_id: &ProgramId, listener: &mut EventListener) -> Result<()>{
+async fn all_players_check(
+    api: &GearApi,
+    program_id: &ProgramId,
+    listener: &mut EventListener,
+) -> Result<()> {
     for i in 0..3 {
         let api = api
             .clone()
