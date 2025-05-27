@@ -1,5 +1,5 @@
 use gstd::prog::ProgramGenerator;
-use poker_client::{VerifyingKeyBytes, PublicKey};
+use poker_client::{PublicKey, VerifyingKeyBytes};
 use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
@@ -14,8 +14,8 @@ struct Storage {
     admins: HashSet<ActorId>,
     config: Config,
     pts_actor_id: ActorId,
-    vk_shuffle_bytes: VerifyingKeyBytes,
-    vk_decrypt_bytes: VerifyingKeyBytes,
+    vk_shuffle_bytes: Vec<u8>,
+    vk_decrypt_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -62,8 +62,8 @@ impl PokerFactoryService {
     pub fn init(
         config: Config,
         pts_actor_id: ActorId,
-        vk_shuffle_bytes: VerifyingKeyBytes,
-        vk_decrypt_bytes: VerifyingKeyBytes,
+        vk_shuffle_bytes: Vec<u8>,
+        vk_decrypt_bytes: Vec<u8>,
     ) -> Self {
         unsafe {
             STORAGE = Some(Storage {
@@ -104,24 +104,25 @@ impl PokerFactoryService {
 
         let balance: u128 = pts_io::GetBalance::decode_reply(bytes_reply_balance).unwrap();
 
+        sails_rs::gstd::debug!("AFTER PTS REPLY");
         if balance < init_lobby.starting_bank {
             panic!("Low pts balance");
         }
-
+        sails_rs::gstd::debug!("BEFORE PAYLOAD");
         let payload = [
             "New".encode(),
             init_lobby.encode(),
             storage.pts_actor_id.encode(),
             pk.encode(),
-            storage.vk_shuffle_bytes.encode(),
-            storage.vk_decrypt_bytes.encode(),
+            storage.vk_shuffle_bytes.clone(),
+            storage.vk_decrypt_bytes.clone(),
         ]
         .concat();
         let create_program_future = ProgramGenerator::create_program_bytes_with_gas_for_reply(
             storage.config.lobby_code_id,
             payload,
             storage.config.gas_for_program,
-            0,
+            1_000_000_000_000,
             storage.config.gas_for_reply_deposit,
         )
         .unwrap_or_else(|e| panic(e));
@@ -135,11 +136,8 @@ impl PokerFactoryService {
             .await
             .expect("PTS: Error adding new admin");
 
-        let request = pts_io::Transfer::encode_call(
-            msg_src,
-            lobby_address,
-            init_lobby.starting_bank,
-        );
+        let request =
+            pts_io::Transfer::encode_call(msg_src, lobby_address, init_lobby.starting_bank);
 
         msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
             .expect("Error in async message to PTS contract")
