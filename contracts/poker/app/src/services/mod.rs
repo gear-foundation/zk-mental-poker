@@ -871,7 +871,6 @@ impl PokerService {
     pub fn card_disclosure(
         &mut self,
         id_to_cards: Vec<(ActorId, (Card, Card))>,
-        table_cards: Vec<Card>,
     ) {
         // TODO: add necessary logic (check difference cards, check msg source)
         let storage = self.get_mut();
@@ -892,11 +891,7 @@ impl PokerService {
             panic("Wrong players");
         }
 
-        if table_cards.len() != 5 {
-            panic("Wrong length of table cards");
-        }
-
-        let table_cards: [Card; 5] = match table_cards.try_into() {
+        let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
             Ok(array) => array,
             Err(_) => unreachable!("Checked length above, should not fail"),
         };

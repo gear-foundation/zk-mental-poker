@@ -7,7 +7,7 @@ mod utils_gclient;
 use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proofs};
 use gclient::EventProcessor;
 use gear_core::ids::ProgramId;
-use poker_client::{Action, BettingStage, Participant, Stage, Status, Card};
+use poker_client::{Action, BettingStage, Participant, Stage, Status, Card, Suit};
 use sails_rs::CodeId;
 use sails_rs::TypeInfo;
 use utils_gclient::*;
@@ -324,6 +324,60 @@ async fn test_basic_function() -> Result<()> {
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
     println!("table_cards after turn: {:?}", table_cards );
+    
+    all_players_check(&api, &program_id, &mut listener).await?;
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    println!("status: {:?}", status);
+    assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
+
+    let cards_payload: Vec<(ActorId, (Card, Card))>= vec![
+        (
+            api_0.get_actor_id(),
+            (
+                Card {
+                    value: 14,
+                    suit: Suit::Hearts,
+                },
+                Card {
+                    value: 14,
+                    suit: Suit::Spades,
+                },
+            ),
+        ),
+        (
+            api_1.get_actor_id(),
+            (
+                Card {
+                    value: 13,
+                    suit: Suit::Hearts,
+                },
+                Card {
+                    value: 13,
+                    suit: Suit::Spades,
+                },
+            ),
+        ),
+        (
+            api_2.get_actor_id(),
+            (
+                Card {
+                    value: 10,
+                    suit: Suit::Hearts,
+                },
+                Card {
+                    value: 10,
+                    suit: Suit::Spades,
+                },
+            ),
+        ),
+    ];
+
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (cards_payload));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    println!("status: {:?}", status);
+    assert_eq!(status, Status::Finished { winners: vec![api_0.get_actor_id()], cash_prize: vec![330] });
 
     Ok(())
 }
