@@ -54,6 +54,7 @@ struct Storage {
     already_invested_in_the_circle: HashMap<ActorId, u128>, // The mapa is needed to keep track of how much a person has put on the table,
     // which can change after each player's turn
     pts_actor_id: ActorId,
+    factory_actor_id: ActorId,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -128,10 +129,16 @@ pub enum Event {
         pk: PublicKey,
         all_registered: bool,
     },
+    PlayerDeleted {
+        player_id: ActorId,
+    },
+    RegistrationCanceled {
+        player_id: ActorId,
+    },
     GameStarted,
     CardsDealtToPlayers(Vec<(ActorId, [EncryptedCard; 2])>),
     CardsDealtToTable(Vec<EncryptedCard>),
-    GameCanceled {
+    GameRestarted {
         status: Status,
     },
     SmallBlindIsSet,
@@ -144,6 +151,9 @@ pub enum Event {
         winners: Vec<ActorId>,
         cash_prize: Vec<u128>,
     },
+    Killed { 
+        inheritor: ActorId
+    }
 }
 
 pub struct PokerService(());
@@ -195,6 +205,7 @@ impl PokerService {
                 original_card_map: init_deck_and_card_map(),
                 partial_table_card_decryptions: HashMap::new(),
                 pts_actor_id,
+                factory_actor_id: msg::source(),
             });
         }
         Self(())
@@ -256,6 +267,160 @@ impl PokerService {
         })
         .expect("Event Invocation Error");
     }
+
+    pub async fn cancel_registration(&mut self) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+
+        match storage.status {
+            Status::Registration | 
+            Status::WaitingShuffleVerification | 
+            Status::Finished { .. } => {},
+            _ => {
+                panic("Wrong status");
+            }
+        }
+
+        if let Some(participant) = storage.participants.get(&msg_src) {
+
+            let request = pts_io::Transfer::encode_call(
+                exec::program_id(),
+                msg_src,
+                participant.balance
+            );
+    
+            msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+                .expect("Error in async message to PTS contract")
+                .await
+                .expect("PTS: Error transfer points to player");
+    
+            storage.participants.remove(&msg_src);
+            storage.active_participants.remove(&msg_src);
+
+        } else {
+            panic("You are not player");
+        }
+
+        self.emit_event(Event::RegistrationCanceled {
+            player_id: msg_src,
+        })
+        .expect("Event Invocation Error");
+    }
+
+    pub fn restart_game(&mut self) {
+        let storage = self.get_mut();
+        if msg::source() != storage.config.admin_id {
+            panic("Access denied");
+        }
+        if !matches!(storage.status, Status::Finished { .. }) {
+            for (id, bet) in storage.betting_bank.iter() {
+                if *bet != 0 {
+                    let participant = storage.participants.get_mut(id).unwrap();
+                    participant.balance += *bet;
+                }
+            }
+        }
+
+        if storage.participants.len() == storage.config.number_of_participants as usize {
+            storage.status = Status::WaitingShuffleVerification;
+        } else {
+            storage.status = Status::Registration;
+        }
+
+        self.emit_event(Event::GameRestarted {
+            status: storage.status.clone(),
+        })
+        .expect("Event Invocation Error");
+    }
+
+    pub async fn kill(&mut self, inheritor: ActorId) {
+        let storage = self.get();
+        let msg_src = msg::source();
+        if msg_src != storage.config.admin_id {
+            panic("Access denied");
+        }
+        match storage.status {
+            Status::Registration | 
+            Status::WaitingShuffleVerification | 
+            Status::Finished { .. } => {},
+            _ => {
+                panic("Wrong status");
+            }
+        }
+        let mut ids = Vec::new();
+        let mut points = Vec::new();
+        
+        for (id, participant) in storage.participants.iter() {
+            ids.push(*id);
+            points.push(participant.balance);
+        }
+        let request = pts_io::BatchTransfer::encode_call(
+            exec::program_id(),
+            ids,
+            points,
+        );
+
+        msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+            .expect("Error in async message to PTS contract")
+            .await
+            .expect("PTS: Error batch transfer points to players");
+
+        let request = [
+            "PokerFactory".encode(),
+            "DeleteLobby".to_string().encode(),
+            (msg::source()).encode(),
+        ]
+        .concat();
+
+        msg::send_bytes_for_reply(storage.factory_actor_id, request, 0, 0)
+            .expect("Error in sending message to PokerFactory")
+            .await
+            .expect("PokerFactory: Error DeleteLobby");
+        
+        self.emit_event(Event::Killed { inheritor })
+            .expect("Notification Error");
+        exec::exit(inheritor);
+    }
+
+    pub async fn delete_player(&mut self, player_id: ActorId) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if msg_src != storage.config.admin_id || player_id == storage.config.admin_id {
+            panic("Access denied");
+        }
+
+        if storage.status != Status::Registration && storage.status != Status::WaitingShuffleVerification {
+            panic("Wrong status");
+        }
+
+        if let Some(participant) = storage.participants.get(&player_id) {
+
+            let request = pts_io::Transfer::encode_call(
+                exec::program_id(),
+                msg_src,
+                participant.balance
+            );
+    
+            msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+                .expect("Error in async message to PTS contract")
+                .await
+                .expect("PTS: Error transfer points to player");
+    
+            storage.participants.remove(&player_id);
+            storage.active_participants.remove(&player_id);
+            storage.status = Status::Registration;
+
+        } else {
+            panic("There is no such player");
+        }
+
+        self.emit_event(Event::PlayerDeleted {
+            player_id,
+        })
+        .expect("Event Invocation Error");
+    }
+
+
 
     pub async fn shuffle_deck(
         &mut self,
@@ -483,30 +648,6 @@ impl PokerService {
                 betting.last_active_time = Some(exec::block_timestamp());
             }
         }
-    }
-
-    pub fn cancel_game(&mut self) {
-        let storage = self.get_mut();
-        if msg::source() != storage.config.admin_id {
-            panic("Access denied");
-        }
-        if matches!(storage.status, Status::Finished { .. }) {
-            panic("Game is over");
-        }
-        for (id, bet) in storage.betting_bank.iter() {
-            let participant = storage.participants.get_mut(id).unwrap();
-            participant.balance += *bet;
-        }
-        if storage.participants.len() == storage.config.number_of_participants as usize {
-            storage.status = Status::WaitingStart;
-        } else {
-            storage.status = Status::Registration;
-        }
-
-        self.emit_event(Event::GameCanceled {
-            status: storage.status.clone(),
-        })
-        .expect("Event Invocation Error");
     }
 
     pub fn turn(&mut self, action: Action) {
@@ -743,7 +884,6 @@ impl PokerService {
     pub fn card_disclosure(
         &mut self,
         id_to_cards: Vec<(ActorId, (Card, Card))>,
-        table_cards: Vec<Card>,
     ) {
         // TODO: add necessary logic (check difference cards, check msg source)
         let storage = self.get_mut();
@@ -764,11 +904,7 @@ impl PokerService {
             panic("Wrong players");
         }
 
-        if table_cards.len() != 5 {
-            panic("Wrong length of table cards");
-        }
-
-        let table_cards: [Card; 5] = match table_cards.try_into() {
+        let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
             Ok(array) => array,
             Err(_) => unreachable!("Checked length above, should not fail"),
         };

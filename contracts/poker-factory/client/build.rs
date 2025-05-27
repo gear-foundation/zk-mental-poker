@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 
 fn main() {
     let out_dir_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let idl_file_path = out_dir_path.join("poker_factory.idl");
+    let idl_file_path = out_dir_path.join("poker-factory.idl");
 
     // Generate IDL file for the program
     sails_idl_gen::generate_idl_to_file::<poker_factory_app::PokerFactoryProgram>(&idl_file_path)

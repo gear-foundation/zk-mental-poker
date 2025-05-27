@@ -43,6 +43,11 @@ pub enum Event {
         to: ActorId,
         amount: u128,
     },
+    BatchTransfered {
+        from: ActorId,
+        to_ids: Vec<ActorId>,
+        amounts: Vec<u128>,
+    },
 }
 
 impl PtsService {
@@ -105,10 +110,38 @@ impl PtsService {
         *from_balance = from_balance.checked_sub(amount).expect("Low balance");
 
         let (to_balance, _last_time) = storage.balances.entry(to).or_insert((0, 0));
-        *to_balance = to_balance.checked_add(amount).expect("Overflow");
+        *to_balance = to_balance.checked_add(amount).unwrap_or(u128::MAX);
 
         self.emit_event(Event::Transfered { from, to, amount })
             .expect("Notification Error");
+    }
+
+    pub fn batch_transfer(&mut self, from: ActorId, to_ids: Vec<ActorId>, amounts: Vec<u128>) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if !storage.admins.contains(&msg_src) && from != msg_src {
+            panic!("Access denied");
+        }
+
+        let (from_balance, _last_time) = storage
+            .balances
+            .get_mut(&from)
+            .expect("Actor id must be exist");
+
+        let total_amount = amounts.iter().sum();
+        *from_balance = from_balance.checked_sub(total_amount).expect("Low balance");
+
+        for (id, amount) in to_ids.clone().into_iter().zip(amounts.clone()) {
+            let (to_balance, _last_time) = storage.balances.entry(id).or_insert((0, 0));
+            *to_balance = to_balance.checked_add(amount).unwrap_or(u128::MAX);
+        }
+
+        self.emit_event(Event::BatchTransfered {
+            from,
+            to_ids,
+            amounts,
+        })
+        .expect("Notification Error");
     }
 
     pub fn add_admin(&mut self, new_admin: ActorId) {
@@ -171,13 +204,13 @@ impl PtsService {
             .expect("Actor id must be exist");
         *balance
     }
-    pub fn get_remaining_time_ms(&self, id: ActorId) -> u64 {
-        let (_, last_time) = self
-            .get()
+    pub fn get_remaining_time_ms(&self, id: ActorId) -> Option<u64> {
+        let storage = self.get();
+        let (_, last_time) = storage
             .balances
             .get(&id)
             .expect("Actor id must be exist");
-        exec::block_timestamp() - last_time
+        storage.time_ms_between_balance_receipt.checked_sub(exec::block_timestamp() - last_time)
     }
 }
 
