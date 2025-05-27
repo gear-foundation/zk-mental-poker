@@ -54,6 +54,7 @@ struct Storage {
     already_invested_in_the_circle: HashMap<ActorId, u128>, // The mapa is needed to keep track of how much a person has put on the table,
     // which can change after each player's turn
     pts_actor_id: ActorId,
+    factory_actor_id: ActorId,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -203,6 +204,7 @@ impl PokerService {
                 original_card_map: init_deck_and_card_map(),
                 partial_table_card_decryptions: HashMap::new(),
                 pts_actor_id,
+                factory_actor_id: msg::source(),
             });
         }
         Self(())
@@ -362,6 +364,18 @@ impl PokerService {
             .await
             .expect("PTS: Error batch transfer points to players");
 
+        let request = [
+            "PokerFactory".encode(),
+            "DeleteLobby".to_string().encode(),
+            (msg::source()).encode(),
+        ]
+        .concat();
+
+        msg::send_bytes_for_reply(storage.factory_actor_id, request, 0, 0)
+            .expect("Error in sending message to PokerFactory")
+            .await
+            .expect("PokerFactory: Error DeleteLobby");
+        
         self.emit_event(Event::Killed { inheritor })
             .expect("Notification Error");
         exec::exit(inheritor);

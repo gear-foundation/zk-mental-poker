@@ -159,9 +159,9 @@ impl PokerFactoryService {
     pub async fn delete_lobby(&mut self, lobby_address: ActorId) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-        let lobby = storage.lobbies.get(&lobby_address).unwrap();
+        let lobby = storage.lobbies.get(&lobby_address).expect("Lobby must be exist");
         if msg_src != lobby.admin_id && msg_src != lobby_address {
-            panic!();
+            panic!("Access denied");
         }
         storage.lobbies.remove(&lobby_address);
 
@@ -172,4 +172,20 @@ impl PokerFactoryService {
     pub fn pts_actor_id(&self) -> ActorId {
         self.get().pts_actor_id
     }
+    pub fn lobbies(&self) -> Vec<(ActorId, LobbyConfig)> {
+        self.get().lobbies.clone().into_iter().collect()
+    }
+    pub fn admins(&self) -> Vec<ActorId> {
+        self.get().admins.clone().into_iter().collect()
+    }
+    pub fn config(&self) -> Config {
+        self.get().config.clone()
+    }
+    pub fn vk_shuffle_bytes(&self) -> VerifyingKeyBytes {
+        self.get().vk_shuffle_bytes.clone()
+    }
+    pub fn vk_decrypt_bytes(&self) -> VerifyingKeyBytes {
+        self.get().vk_decrypt_bytes.clone()
+    }
+
 }

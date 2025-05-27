@@ -81,7 +81,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
 
     // // Factory
 
-    // let path = "../poker_factory/target/wasm32-gear/release/poker_factory.opt.wasm";
+    // let path = "../poker-factory/target/wasm32-gear/release/poker-factory.opt.wasm";
     // let config = Config {
     //     lobby_code_id,
     //     gas_for_program: 200_000_000_000,
