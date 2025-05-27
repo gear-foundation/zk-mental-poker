@@ -156,6 +156,7 @@ impl PokerService {
         vk_shuffle_bytes: VerifyingKeyBytes,
         vk_decrypt_bytes: VerifyingKeyBytes,
     ) -> Self {
+        sails_rs::gstd::debug!("POKER");
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
@@ -465,9 +466,7 @@ impl PokerService {
 
                 if let Some(card) =
                     decrypt_point(&storage.original_card_map, encrypted_card, partials)
-                {
-                    sails_rs::gstd::debug!("CARD {:?}", card.clone());
-
+                { 
                     revealed_cards.push(card);
                 } else {
                     panic!("Failed to decrypt card");

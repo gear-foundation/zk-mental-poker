@@ -6,18 +6,29 @@ use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
 use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proofs};
 use gclient::EventProcessor;
-use gear_core::ids::ProgramId;
-use poker_client::{Action, BettingStage, Participant, Stage, Status, Card};
-use sails_rs::CodeId;
+use gear_core::ids::prelude::CodeIdExt;
+use gear_core::ids::{CodeId, ProgramId};
+use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
+use std::fs;
 use utils_gclient::*;
 
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-    let api = GearApi::vara_testnet().await?;
+    let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
+   // let api = GearApi::dev().await?;
+   let api = GearApi::vara_testnet().await?;
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
+    let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
+    {
+        code_id
+    } else {
+        let code =
+            fs::read("./target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
+        CodeId::generate(code.as_ref())
+    };
+    let pks = load_player_public_keys("tests/test_data/player_pks.json");
 
     // PTS
     let path = "../pts/target/wasm32-gear/release/pts.opt.wasm";
@@ -47,80 +58,8 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let shuffle_vkey = get_vkey("tests/test_data/shuffle_vkey.json");
     let decrypt_vkey = get_vkey("tests/test_data/decrypt_vkey.json");
 
-    let lobby_code_id: CodeId =
-        hex_literal::hex!("d11a80c81de9d1ad5a721a5dad3ba6af4eb01d5f66702e78f103881e256ab9bf")
-            .into();
-
-    println!("CodeId {:?}", lobby_code_id);
-    // // Poker
-    let path = "./target/wasm32-gear/release/poker.opt.wasm";
-    let config = LobbyConfig {
-        admin_id: api.get_actor_id(),
-        admin_name: "Name".to_string(),
-        lobby_name: "Lobby".to_string(),
-        small_blind: 5,
-        big_blind: 10,
-        number_of_participants: 3,
-        starting_bank: 1000,
-    };
-    let constructor = (config, pts_id, pks[0].1.clone(), shuffle_vkey, decrypt_vkey);
-    let request = ["New".encode(), constructor.encode()].concat();
-
-    let (message_id, program_id, hash) = api
-        .upload_program_bytes(
-            gclient::code_from_os(path).unwrap(),
-            gclient::now_micros().to_le_bytes(),
-            request,
-            740_000_000_000,
-            0,
-        )
-        .await
-        .expect("Error upload program bytes");
-    assert!(listener.message_processed(message_id).await?.succeed());
-    println!("poker_id {:?}", program_id);
-
-    // // Factory
-
-    // let path = "../poker_factory/target/wasm32-gear/release/poker_factory.opt.wasm";
-    // let config = Config {
-    //     lobby_code_id,
-    //     gas_for_program: 200_000_000_000,
-    //     gas_for_reply_deposit: 10_000_000_000,
-    // };
-    // let request = [
-    //     "New".encode(),
-    //     (config, pts_id, shuffle_vkey, decrypt_vkey).encode(),
-    // ]
-    // .concat();
-
-    // let (message_id, factory_program_id, _hash) = api
-    //     .upload_program_bytes(
-    //         gclient::code_from_os(path).unwrap(),
-    //         gclient::now_micros().to_le_bytes(),
-    //         request,
-    //         740_000_000_000,
-    //         0,
-    //     )
-    //     .await
-    //     .expect("Error upload program bytes");
-    // assert!(listener.message_processed(message_id).await?.succeed());
-
-    // println!("factory_id {:?}", factory_program_id);
-
-    // // make admin in PTS
-    // println!("add admin");
-    // let factory_id_bytes: [u8; 32] = factory_program_id.into();
-    // let factory_id: ActorId = factory_id_bytes.into();
-    // let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "AddAdmin", payload: (factory_id));
-    // assert!(listener.message_processed(message_id).await?.succeed());
-
-    // // mint tokens in PTS
-    // println!("mint tokens");
-    // let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "GetAccural", payload: ());
-    // assert!(listener.message_processed(message_id).await?.succeed());
-
-    // // create lobby
-    // println!("create lobby");
+    // // // Poker
+    // let code = fs::read(poker_code_path).expect("Failed to read file");
     // let config = LobbyConfig {
     //     admin_id: api.get_actor_id(),
     //     admin_name: "Name".to_string(),
@@ -130,8 +69,72 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     //     number_of_participants: 3,
     //     starting_bank: 1000,
     // };
-    // let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
-    // assert!(listener.message_processed(message_id).await?.succeed());
+    // let constructor = (config, pts_id, pks[0].1.clone(), shuffle_vkey.clone(), decrypt_vkey.clone());
+    // let request = ["New".encode(), constructor.encode()].concat();
+
+    // let gas = api
+    //     .calculate_upload_gas(None, code, request, 0, true)
+    //     .await?;
+    // println!("GAS {:?}", gas);
+
+
+
+    // Factory
+
+    let path = "../poker_factory/target/wasm32-gear/release/poker_factory.opt.wasm";
+    let config = Config {
+        lobby_code_id: poker_code_id,
+        gas_for_program: 680_000_000_000,
+        gas_for_reply_deposit: 10_000_000_000,
+    };
+    let request = [
+        "New".encode(),
+        (config, pts_id, shuffle_vkey.encode(), decrypt_vkey.encode()).encode(),
+    ]
+    .concat();
+
+    let (message_id, factory_program_id, _hash) = api
+        .upload_program_bytes(
+            gclient::code_from_os(path).unwrap(),
+            gclient::now_micros().to_le_bytes(),
+            request,
+            740_000_000_000,
+            10_000_000_000_000,
+        )
+        .await
+        .expect("Error upload program bytes");
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    println!("factory_id {:?}", factory_program_id);
+
+    // make admin in PTS
+    println!("add admin");
+    let factory_id_bytes: [u8; 32] = factory_program_id.into();
+    let factory_id: ActorId = factory_id_bytes.into();
+    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "AddAdmin", payload: (factory_id));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    // mint tokens in PTS
+    println!("mint tokens");
+    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    // create lobby
+    println!("create lobby");
+    let config = LobbyConfig {
+        admin_id: api.get_actor_id(),
+        admin_name: "Name".to_string(),
+        lobby_name: "Lobby".to_string(),
+        small_blind: 5,
+        big_blind: 10,
+        number_of_participants: 3,
+        starting_bank: 1000,
+    };
+    let request = ["PokerFactory".encode(), "CreateLobby".encode(), (config.clone(), pks[0].1.clone()).encode()].concat();
+    let gas = api.calculate_handle_gas(None, factory_program_id, request, 0, true).await?;
+    println!("GAS {:?}", gas);
+    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
 
     Ok(())
 }
@@ -238,7 +241,7 @@ async fn test_basic_function() -> Result<()> {
 
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after preflop: {:?}", table_cards );
+    println!("table_cards after preflop: {:?}", table_cards);
 
     // Flop
     // check: Raise -> Raise -> Call -> Call
@@ -298,11 +301,16 @@ async fn test_basic_function() -> Result<()> {
 
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after flop: {:?}", table_cards );
+    println!("table_cards after flop: {:?}", table_cards);
 
     all_players_check(&api, &program_id, &mut listener).await?;
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    assert_eq!(status, Status::Play { stage: Stage::WaitingTableCardsAfterTurn});
+    assert_eq!(
+        status,
+        Status::Play {
+            stage: Stage::WaitingTableCardsAfterTurn
+        }
+    );
 
     println!("decrypt 1 card after turn");
     for (pk, _, _, name) in pk_to_actor_id.iter() {
@@ -323,7 +331,7 @@ async fn test_basic_function() -> Result<()> {
 
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after turn: {:?}", table_cards );
+    println!("table_cards after turn: {:?}", table_cards);
 
     Ok(())
 }

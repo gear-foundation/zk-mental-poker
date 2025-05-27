@@ -4,7 +4,7 @@
 mod services;
 use crate::services::{Config, PokerFactoryService};
 use poker_client::{PublicKey, VerifyingKeyBytes};
-use sails_rs::ActorId;
+use sails_rs::{ActorId, Vec};
 pub struct PokerFactoryProgram(());
 
 #[sails_rs::program]
@@ -12,8 +12,8 @@ impl PokerFactoryProgram {
     pub fn new(
         config: Config,
         pts_actor_id: ActorId,
-        vk_shuffle_bytes: VerifyingKeyBytes,
-        vk_decrypt_bytes: VerifyingKeyBytes,
+        vk_shuffle_bytes: Vec<u8>,
+        vk_decrypt_bytes: Vec<u8>,
     ) -> Self {
         PokerFactoryService::init(config, pts_actor_id, vk_shuffle_bytes, vk_decrypt_bytes);
         Self(())
