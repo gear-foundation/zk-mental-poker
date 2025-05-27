@@ -1,5 +1,5 @@
 [package]
-name = "poker_factory_client"
+name = "poker-factory-client"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,7 @@ mockall = { version = "0.12", optional = true }
 sails-rs = "0.8.0"
 
 [build-dependencies]
-poker_factory_app = { path = "../app" }
+poker-factory-app = { path = "../app" }
 sails-client-gen = "0.8.0"
 sails-idl-gen = "0.8.0"
 
