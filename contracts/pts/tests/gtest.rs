@@ -36,7 +36,11 @@ async fn test_transfer() {
         .await
         .unwrap();
 
-    let balance = service_client.get_balance(USER_ID.into()).recv(program_id).await.unwrap();
+    let balance = service_client
+        .get_balance(USER_ID.into())
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(balance, 1_000);
 
     service_client
@@ -45,9 +49,17 @@ async fn test_transfer() {
         .await
         .unwrap();
 
-    let balance = service_client.get_balance(USER_ID.into()).recv(program_id).await.unwrap();
+    let balance = service_client
+        .get_balance(USER_ID.into())
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(balance, 0);
-    let balance = service_client.get_balance(ACTOR_ID.into()).recv(program_id).await.unwrap();
+    let balance = service_client
+        .get_balance(ACTOR_ID.into())
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(balance, 1_000);
 
     service_client
@@ -56,9 +68,16 @@ async fn test_transfer() {
         .await
         .unwrap();
 
-    let balance = service_client.get_balance(ACTOR_ID.into()).recv(program_id).await.unwrap();
+    let balance = service_client
+        .get_balance(ACTOR_ID.into())
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(balance, 0);
-    let balance = service_client.get_balance(USER_ID.into()).recv(program_id).await.unwrap();
+    let balance = service_client
+        .get_balance(USER_ID.into())
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(balance, 1_000);
 }
-

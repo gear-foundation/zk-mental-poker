@@ -206,11 +206,10 @@ impl PtsService {
     }
     pub fn get_remaining_time_ms(&self, id: ActorId) -> Option<u64> {
         let storage = self.get();
-        let (_, last_time) = storage
-            .balances
-            .get(&id)
-            .expect("Actor id must be exist");
-        storage.time_ms_between_balance_receipt.checked_sub(exec::block_timestamp() - last_time)
+        let (_, last_time) = storage.balances.get(&id).expect("Actor id must be exist");
+        storage
+            .time_ms_between_balance_receipt
+            .checked_sub(exec::block_timestamp() - last_time)
     }
 }
 

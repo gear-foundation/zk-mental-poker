@@ -16,8 +16,8 @@ use utils_gclient::*;
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
-   // let api = GearApi::dev().await?;
-   let api = GearApi::vara_testnet().await?;
+    // let api = GearApi::dev().await?;
+    let api = GearApi::vara_testnet().await?;
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
     let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
@@ -109,8 +109,15 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         number_of_participants: 3,
         starting_bank: 1000,
     };
-    let request = ["PokerFactory".encode(), "CreateLobby".encode(), (config.clone(), pks[0].1.clone()).encode()].concat();
-    let gas = api.calculate_handle_gas(None, factory_program_id, request, 0, true).await?;
+    let request = [
+        "PokerFactory".encode(),
+        "CreateLobby".encode(),
+        (config.clone(), pks[0].1.clone()).encode(),
+    ]
+    .concat();
+    let gas = api
+        .calculate_handle_gas(None, factory_program_id, request, 0, true)
+        .await?;
     println!("GAS {:?}", gas);
     let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
@@ -310,14 +317,14 @@ async fn test_basic_function() -> Result<()> {
 
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after turn: {:?}", table_cards );
-    
+    println!("table_cards after turn: {:?}", table_cards);
+
     all_players_check(&api, &program_id, &mut listener).await?;
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
     assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
 
-    let cards_payload: Vec<(ActorId, (Card, Card))>= vec![
+    let cards_payload: Vec<(ActorId, (Card, Card))> = vec![
         (
             api_0.get_actor_id(),
             (
@@ -364,7 +371,13 @@ async fn test_basic_function() -> Result<()> {
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
-    assert_eq!(status, Status::Finished { winners: vec![api_0.get_actor_id()], cash_prize: vec![330] });
+    assert_eq!(
+        status,
+        Status::Finished {
+            winners: vec![api_0.get_actor_id()],
+            cash_prize: vec![330]
+        }
+    );
 
     Ok(())
 }
@@ -448,12 +461,14 @@ async fn test_time_limit_only_one_player_stayed() -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::test]
 async fn test_registration() -> Result<()> {
-    use crate::zk_loader::{load_player_secret_keys, load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
-    use poker_client::PublicKey;
+    use crate::zk_loader::{
+        load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
+        load_player_secret_keys, load_shuffle_proofs,
+    };
     use ark_ed_on_bls12_381_bandersnatch::Fr;
+    use poker_client::PublicKey;
 
     let api = GearApi::dev().await?;
 
@@ -495,9 +510,12 @@ async fn test_registration() -> Result<()> {
 
 #[tokio::test]
 async fn test_delete_player() -> Result<()> {
-    use crate::zk_loader::{load_player_secret_keys, load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
-    use poker_client::PublicKey;
+    use crate::zk_loader::{
+        load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
+        load_player_secret_keys, load_shuffle_proofs,
+    };
     use ark_ed_on_bls12_381_bandersnatch::Fr;
+    use poker_client::PublicKey;
 
     let api = GearApi::dev().await?;
 

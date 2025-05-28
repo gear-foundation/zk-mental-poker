@@ -92,11 +92,11 @@ impl PokerFactoryService {
     }
 
     /// Creates new poker lobby with provided config.
-    /// 
+    ///
     /// Panics if:
     /// - Insufficient PTS balance
     /// - Program creation fails
-    /// 
+    ///
     /// Performs:
     /// 1. Checks player's PTS balance
     /// 2. Deploys new lobby program
@@ -174,8 +174,14 @@ impl PokerFactoryService {
     pub async fn delete_lobby(&mut self, lobby_address: ActorId) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-        let lobby = storage.lobbies.get(&lobby_address).expect("Lobby must be exist");
-        if msg_src != lobby.admin_id && msg_src != lobby_address && !storage.admins.contains(&msg_src) {
+        let lobby = storage
+            .lobbies
+            .get(&lobby_address)
+            .expect("Lobby must be exist");
+        if msg_src != lobby.admin_id
+            && msg_src != lobby_address
+            && !storage.admins.contains(&msg_src)
+        {
             panic!("Access denied");
         }
         storage.lobbies.remove(&lobby_address);
@@ -211,5 +217,4 @@ impl PokerFactoryService {
     pub fn vk_decrypt_bytes(&self) -> Vec<u8> {
         self.get().vk_decrypt_bytes.clone()
     }
-
 }
