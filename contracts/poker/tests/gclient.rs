@@ -8,7 +8,7 @@ use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proof
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
-use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
+use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
 use sails_rs::TypeInfo;
 use std::fs;
 use utils_gclient::*;
@@ -445,5 +445,96 @@ async fn test_time_limit_only_one_player_stayed() -> Result<()> {
     println!("status: {:?}", status);
     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
     println!("participants: {:?}", participants);
+    Ok(())
+}
+
+
+#[tokio::test]
+async fn test_registration() -> Result<()> {
+    use crate::zk_loader::{load_player_secret_keys, load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
+    use poker_client::PublicKey;
+    use ark_ed_on_bls12_381_bandersnatch::Fr;
+
+    let api = GearApi::dev().await?;
+
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let pks = load_player_public_keys("tests/test_data/player_pks.json");
+    let sks = load_player_secret_keys("tests/test_data/player_sks.json");
+
+    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
+    let api = get_new_client(&api, USERS_STR[0]).await;
+    let id = api.get_actor_id();
+    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
+
+    // Init
+    let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
+
+    // Resgiter
+    println!("REGISTER");
+    let mut player_name = "Alice".to_string();
+    let api = get_new_client(&api, USERS_STR[1]).await;
+    let id = api.get_actor_id();
+    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
+    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    assert_eq!(participants.len(), 2);
+
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CancelRegistration", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    assert_eq!(participants.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delete_player() -> Result<()> {
+    use crate::zk_loader::{load_player_secret_keys, load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
+    use poker_client::PublicKey;
+    use ark_ed_on_bls12_381_bandersnatch::Fr;
+
+    let api = GearApi::dev().await?;
+
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let pks = load_player_public_keys("tests/test_data/player_pks.json");
+    let sks = load_player_secret_keys("tests/test_data/player_sks.json");
+
+    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
+    let api = get_new_client(&api, USERS_STR[0]).await;
+    let id = api.get_actor_id();
+    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
+
+    // Init
+    let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
+
+    // Resgiter
+    println!("REGISTER");
+    let mut player_name = "Alice".to_string();
+    let api = get_new_client(&api, USERS_STR[1]).await;
+    let id = api.get_actor_id();
+    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
+    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    assert_eq!(participants.len(), 2);
+
+    let player_to_delete = api.get_actor_id();
+    let api = get_new_client(&api, USERS_STR[0]).await;
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "DeletePlayer", payload: (player_to_delete));
+    assert!(listener.message_processed(message_id).await?.succeed());
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    assert_eq!(participants.len(), 1);
+
     Ok(())
 }
