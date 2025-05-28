@@ -2,7 +2,7 @@ use ark_bls12_381::Bls12_381;
 use ark_bls12_381::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{Field, PrimeField};
+use ark_ff::{BigInteger, Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 use num_traits::Num;
@@ -119,6 +119,7 @@ fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
     }
     let mut buf = [0u8; 32];
     buf[32 - b.len()..].copy_from_slice(&b);
+    buf.reverse();
     buf
 }
 
@@ -362,10 +363,8 @@ pub fn load_encrypted_table_cards(path: &str) -> Vec<EncryptedCard> {
 
 fn from_decimal_string(s: &str) -> Vec<u8> {
     let n = BigUint::from_str_radix(s, 10).expect("invalid number");
-    let mut b = n.to_bytes_be();
-    while b.len() < 32 {
-        b.insert(0, 0);
-    }
+    let mut b = n.to_bytes_le();
+    b.resize(32, 0); // дополняем нулями справа (в конец), если нужно
     b
 }
 

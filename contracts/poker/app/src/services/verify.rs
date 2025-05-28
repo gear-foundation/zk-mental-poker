@@ -1,3 +1,9 @@
+use crate::services::{
+    EncryptedCard, PublicKey,
+    curve::{compare_points, compare_public_keys},
+};
+use ark_ed_on_bls12_381_bandersnatch::Fq;
+use ark_ff::{One, PrimeField};
 use core::ops::AddAssign;
 use gbuiltin_bls381::{
     Request, Response,
@@ -6,7 +12,7 @@ use gbuiltin_bls381::{
     ark_ff::Field,
     ark_scale,
     ark_scale::hazmat::ArkScaleProjective,
-    ark_serialize::{CanonicalDeserialize, CanonicalSerialize},
+    ark_serialize::{CanonicalDeserialize},
 };
 use gstd::{ActorId, Encode, ext, msg, prelude::*};
 
@@ -212,4 +218,133 @@ async fn prepare_inputs(
     g_ic.add_assign(msm_result_affine);
 
     g_ic.into()
+}
+
+pub fn validate_shuffle_chain(
+    instances: &[VerificationVariables],
+    original_deck: &[EncryptedCard],
+    expected_pub_key: &PublicKey,
+    final_encrypted_deck: &[EncryptedCard],
+) {
+    let mut expected_original = original_deck.to_vec();
+
+    for (i, instance) in instances.iter().enumerate() {
+        let (original, permuted, pk) = parse_original_and_permuted(&instance.public_input);
+
+        assert!(
+            compare_public_keys(expected_pub_key, &pk),
+            "Wrong aggregated public key"
+        );
+
+        if i == 0 {
+            assert_initial_deck_matches(&expected_original, &original);
+        } else {
+            assert_eq!(original, expected_original, "Mismatch in shuffle chain");
+        }
+
+        expected_original = permuted;
+    }
+
+    assert_eq!(
+        expected_original.len(),
+        final_encrypted_deck.len(),
+        "Final deck length mismatch"
+    );
+
+    for (expected, actual) in expected_original
+        .iter()
+        .zip(final_encrypted_deck)
+    {
+        if !compare_points(&expected.c0, &actual.c0) || !compare_points(&expected.c1, &actual.c1) {
+            panic!("Mismatch in deck");
+        }
+    }
+}
+
+fn assert_initial_deck_matches(expected: &[EncryptedCard], actual: &[EncryptedCard]) {
+    assert_eq!(
+        expected.len(),
+        actual.len(),
+        "Deck length mismatch in initial check"
+    );
+
+    for (e, a) in expected.iter().zip(actual) {
+        if !compare_points(&e.c1, &a.c1) {
+            panic!("Mismatch in initial deck");
+        }
+    }
+}
+
+pub fn parse_original_and_permuted(
+    public_input: &[Vec<u8>],
+) -> (Vec<EncryptedCard>, Vec<EncryptedCard>, PublicKey) {
+    let num_cards: usize = 52;
+    // c0.X, c0.Y, c0.Z, c1.X, c1.Y, c1.Z
+    let num_coords: usize = 6;
+    let pk_size: usize = 3;
+    let original_offset: usize = pk_size + 1;
+    let permuted_offset: usize = original_offset + num_coords * num_cards;
+
+    // Check input length (original + permuted)
+    let expected_length = pk_size + num_coords * num_cards * 2 + 1;
+
+    if public_input.len() != expected_length {
+        panic!("Invalid length");
+    }
+
+    let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
+
+    if is_valid != Fq::one() {
+        panic!("Invalid proof: is_valid != 1");
+    }
+
+    // // pk[3]
+    let pk = PublicKey {
+        x: public_input[1]
+            .clone()
+            .try_into()
+            .expect("expected 32 bytes for x"),
+        y: public_input[2]
+            .clone()
+            .try_into()
+            .expect("expected 32 bytes for y"),
+        z: public_input[3]
+            .clone()
+            .try_into()
+            .expect("expected 32 bytes for z"),
+    };
+
+    sails_rs::gstd::debug!("PK {:?}", pk);
+
+    // Parsing `original`
+    let original = (0..num_cards)
+        .map(|card_idx| EncryptedCard {
+            c0: [
+                public_input[original_offset + 0 * num_cards + card_idx].clone(),
+                public_input[original_offset + 1 * num_cards + card_idx].clone(),
+                public_input[original_offset + 2 * num_cards + card_idx].clone(),
+            ],
+            c1: [
+                public_input[original_offset + 3 * num_cards + card_idx].clone(),
+                public_input[original_offset + 4 * num_cards + card_idx].clone(),
+                public_input[original_offset + 5 * num_cards + card_idx].clone(),
+            ],
+        })
+        .collect();
+    // Parsing `permuted`
+    let permuted = (0..num_cards)
+        .map(|card_idx| EncryptedCard {
+            c0: [
+                public_input[permuted_offset + 0 * num_cards + card_idx].clone(),
+                public_input[permuted_offset + 1 * num_cards + card_idx].clone(),
+                public_input[permuted_offset + 2 * num_cards + card_idx].clone(),
+            ],
+            c1: [
+                public_input[permuted_offset + 3 * num_cards + card_idx].clone(),
+                public_input[permuted_offset + 4 * num_cards + card_idx].clone(),
+                public_input[permuted_offset + 5 * num_cards + card_idx].clone(),
+            ],
+        })
+        .collect();
+    (original, permuted, pk)
 }

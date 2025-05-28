@@ -1,5 +1,5 @@
 #![allow(static_mut_refs)]
-use sails_rs::collections::HashMap;
+use sails_rs::collections::{HashMap};
 use sails_rs::gstd::{debug, exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
@@ -7,15 +7,14 @@ mod curve;
 mod utils;
 mod verify;
 use crate::services::curve::{
-    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
+    calculate_agg_pub_key, decrypt_point, init_deck_and_card_map,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
-    get_prepared_inputs_bytes, verify_batch,
+    validate_shuffle_chain, verify_batch,
 };
-
 const TIME_FOR_MOVE: u64 = 30_000; // 30s
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
@@ -39,9 +38,11 @@ struct Storage {
     partial_table_card_decryptions: HashMap<EncryptedCard, PartialDecryptionsByCard>,
     revealed_table_cards: Vec<Card>,
     original_card_map: HashMap<EdwardsProjective, Card>,
+    original_deck: Vec<EncryptedCard>,
     table_cards: Vec<EncryptedCard>,
     deck_position: usize,
     participants: HashMap<ActorId, Participant>,
+    agg_pub_key: PublicKey,
     // active_participants - players who can place bets
     // not to be confused with those who are in the game, as there are also all in players.
     active_participants: TurnManager<ActorId>,
@@ -110,7 +111,7 @@ pub struct Participant {
     pk: PublicKey,
 }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct PublicKey {
@@ -118,6 +119,7 @@ pub struct PublicKey {
     pub y: [u8; 32],
     pub z: [u8; 32],
 }
+
 static mut STORAGE: Option<Storage> = None;
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -151,9 +153,9 @@ pub enum Event {
         winners: Vec<ActorId>,
         cash_prize: Vec<u128>,
     },
-    Killed { 
-        inheritor: ActorId
-    }
+    Killed {
+        inheritor: ActorId,
+    },
 }
 
 pub struct PokerService(());
@@ -174,13 +176,14 @@ impl PokerService {
                 balance: config.starting_bank,
                 card_1: None,
                 card_2: None,
-                pk,
+                pk: pk.clone(),
             },
         );
         let mut active_participants = TurnManager::new();
         active_participants.add(config.admin_id);
         let vk_shuffle = decode_verifying_key(&vk_shuffle_bytes);
         let vk_decrypt = decode_verifying_key(&vk_decrypt_bytes);
+        let (original_deck, original_card_map) = init_deck_and_card_map();
         unsafe {
             STORAGE = Some(Storage {
                 builtin_bls381_address: ActorId::from(ACTOR_ID),
@@ -201,10 +204,12 @@ impl PokerService {
                 table_cards: Vec::new(),
                 partially_decrypted_cards: HashMap::new(),
                 revealed_table_cards: Vec::new(),
-                original_card_map: init_deck_and_card_map(),
+                original_card_map,
+                original_deck,
                 partial_table_card_decryptions: HashMap::new(),
                 pts_actor_id,
                 factory_actor_id: msg::source(),
+                agg_pub_key: pk,
             });
         }
         Self(())
@@ -254,11 +259,13 @@ impl PokerService {
             },
         );
         storage.active_participants.add(msg_src);
+
         let mut all_registered = false;
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingShuffleVerification;
             all_registered = true;
         }
+        storage.agg_pub_key = calculate_agg_pub_key(storage.agg_pub_key.clone(), pk.clone());
         self.emit_event(Event::Registered {
             participant_id: msg_src,
             pk,
@@ -272,38 +279,30 @@ impl PokerService {
         let msg_src = msg::source();
 
         match storage.status {
-            Status::Registration | 
-            Status::WaitingShuffleVerification | 
-            Status::Finished { .. } => {},
+            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } => {
+            }
             _ => {
                 panic("Wrong status");
             }
         }
 
         if let Some(participant) = storage.participants.get(&msg_src) {
+            let request =
+                pts_io::Transfer::encode_call(exec::program_id(), msg_src, participant.balance);
 
-            let request = pts_io::Transfer::encode_call(
-                exec::program_id(),
-                msg_src,
-                participant.balance
-            );
-    
             msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
                 .expect("Error in async message to PTS contract")
                 .await
                 .expect("PTS: Error transfer points to player");
-    
+
             storage.participants.remove(&msg_src);
             storage.active_participants.remove(&msg_src);
-
         } else {
             panic("You are not player");
         }
 
-        self.emit_event(Event::RegistrationCanceled {
-            player_id: msg_src,
-        })
-        .expect("Event Invocation Error");
+        self.emit_event(Event::RegistrationCanceled { player_id: msg_src })
+            .expect("Event Invocation Error");
     }
 
     pub fn restart_game(&mut self) {
@@ -339,25 +338,20 @@ impl PokerService {
             panic("Access denied");
         }
         match storage.status {
-            Status::Registration | 
-            Status::WaitingShuffleVerification | 
-            Status::Finished { .. } => {},
+            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } => {
+            }
             _ => {
                 panic("Wrong status");
             }
         }
         let mut ids = Vec::new();
         let mut points = Vec::new();
-        
+
         for (id, participant) in storage.participants.iter() {
             ids.push(*id);
             points.push(participant.balance);
         }
-        let request = pts_io::BatchTransfer::encode_call(
-            exec::program_id(),
-            ids,
-            points,
-        );
+        let request = pts_io::BatchTransfer::encode_call(exec::program_id(), ids, points);
 
         msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
             .expect("Error in async message to PTS contract")
@@ -375,7 +369,7 @@ impl PokerService {
             .expect("Error in sending message to PokerFactory")
             .await
             .expect("PokerFactory: Error DeleteLobby");
-        
+
         self.emit_event(Event::Killed { inheritor })
             .expect("Notification Error");
         exec::exit(inheritor);
@@ -388,38 +382,31 @@ impl PokerService {
             panic("Access denied");
         }
 
-        if storage.status != Status::Registration && storage.status != Status::WaitingShuffleVerification {
+        if storage.status != Status::Registration
+            && storage.status != Status::WaitingShuffleVerification
+        {
             panic("Wrong status");
         }
 
         if let Some(participant) = storage.participants.get(&player_id) {
+            let request =
+                pts_io::Transfer::encode_call(exec::program_id(), msg_src, participant.balance);
 
-            let request = pts_io::Transfer::encode_call(
-                exec::program_id(),
-                msg_src,
-                participant.balance
-            );
-    
             msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
                 .expect("Error in async message to PTS contract")
                 .await
                 .expect("PTS: Error transfer points to player");
-    
+
             storage.participants.remove(&player_id);
             storage.active_participants.remove(&player_id);
             storage.status = Status::Registration;
-
         } else {
             panic("There is no such player");
         }
 
-        self.emit_event(Event::PlayerDeleted {
-            player_id,
-        })
-        .expect("Event Invocation Error");
+        self.emit_event(Event::PlayerDeleted { player_id })
+            .expect("Event Invocation Error");
     }
-
-
 
     pub async fn shuffle_deck(
         &mut self,
@@ -430,6 +417,14 @@ impl PokerService {
         if storage.status != Status::WaitingShuffleVerification {
             panic("Wrong status");
         }
+
+        validate_shuffle_chain(
+            &instances,
+            &storage.original_deck,
+            &storage.agg_pub_key,
+            &encrypted_deck,
+        );
+
         verify_batch(
             &storage.vk_shuffle,
             instances,
@@ -438,6 +433,7 @@ impl PokerService {
         .await;
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
+        sails_rs::gstd::debug!("GAS AFTER ZK {:?}", sails_rs::gstd::exec::gas_available());
     }
 
     pub async fn start_game(&mut self) {
@@ -882,10 +878,7 @@ impl PokerService {
             .expect("Event Invocation Error");
     }
 
-    pub fn card_disclosure(
-        &mut self,
-        id_to_cards: Vec<(ActorId, (Card, Card))>,
-    ) {
+    pub fn card_disclosure(&mut self, id_to_cards: Vec<(ActorId, (Card, Card))>) {
         // TODO: add necessary logic (check difference cards, check msg source)
         let storage = self.get_mut();
         let mut expected_players: Vec<ActorId> = storage
