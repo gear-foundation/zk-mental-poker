@@ -8,7 +8,7 @@ use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proof
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
-use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
+use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
 use sails_rs::TypeInfo;
 use std::fs;
 use utils_gclient::*;
@@ -16,8 +16,8 @@ use utils_gclient::*;
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
-   // let api = GearApi::dev().await?;
-   let api = GearApi::vara_testnet().await?;
+    // let api = GearApi::dev().await?;
+    let api = GearApi::vara_testnet().await?;
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
     let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
@@ -109,8 +109,15 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         number_of_participants: 3,
         starting_bank: 1000,
     };
-    let request = ["PokerFactory".encode(), "CreateLobby".encode(), (config.clone(), pks[0].1.clone()).encode()].concat();
-    let gas = api.calculate_handle_gas(None, factory_program_id, request, 0, true).await?;
+    let request = [
+        "PokerFactory".encode(),
+        "CreateLobby".encode(),
+        (config.clone(), pks[0].1.clone()).encode(),
+    ]
+    .concat();
+    let gas = api
+        .calculate_handle_gas(None, factory_program_id, request, 0, true)
+        .await?;
     println!("GAS {:?}", gas);
     let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
@@ -139,6 +146,7 @@ pub struct Config {
     pub gas_for_program: u64,
     pub gas_for_reply_deposit: u64,
 }
+
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {
     let api = GearApi::dev().await?;
@@ -310,14 +318,14 @@ async fn test_basic_function() -> Result<()> {
 
     // get revealed cards
     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after turn: {:?}", table_cards );
-    
+    println!("table_cards after turn: {:?}", table_cards);
+
     all_players_check(&api, &program_id, &mut listener).await?;
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
     assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
 
-    let cards_payload: Vec<(ActorId, (Card, Card))>= vec![
+    let cards_payload: Vec<(ActorId, (Card, Card))> = vec![
         (
             api_0.get_actor_id(),
             (
@@ -364,7 +372,13 @@ async fn test_basic_function() -> Result<()> {
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
-    assert_eq!(status, Status::Finished { winners: vec![api_0.get_actor_id()], cash_prize: vec![330] });
+    assert_eq!(
+        status,
+        Status::Finished {
+            winners: vec![api_0.get_actor_id()],
+            cash_prize: vec![330]
+        }
+    );
 
     Ok(())
 }
