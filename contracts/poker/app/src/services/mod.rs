@@ -1,14 +1,12 @@
 #![allow(static_mut_refs)]
-use sails_rs::collections::{HashMap};
+use sails_rs::collections::HashMap;
 use sails_rs::gstd::{debug, exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
 mod utils;
 mod verify;
-use crate::services::curve::{
-    calculate_agg_pub_key, decrypt_point, init_deck_and_card_map,
-};
+use crate::services::curve::{calculate_agg_pub_key, decrypt_point, init_deck_and_card_map};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
@@ -168,6 +166,7 @@ impl PokerService {
         vk_shuffle_bytes: VerifyingKeyBytes,
         vk_decrypt_bytes: VerifyingKeyBytes,
     ) -> Self {
+        sails_rs::gstd::debug!("POKER");
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
@@ -627,8 +626,6 @@ impl PokerService {
                 if let Some(card) =
                     decrypt_point(&storage.original_card_map, encrypted_card, partials)
                 {
-                    sails_rs::gstd::debug!("CARD {:?}", card.clone());
-
                     revealed_cards.push(card);
                 } else {
                     panic!("Failed to decrypt card");

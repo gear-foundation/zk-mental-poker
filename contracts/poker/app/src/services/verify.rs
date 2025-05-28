@@ -12,7 +12,7 @@ use gbuiltin_bls381::{
     ark_ff::Field,
     ark_scale,
     ark_scale::hazmat::ArkScaleProjective,
-    ark_serialize::{CanonicalDeserialize},
+    ark_serialize::CanonicalDeserialize,
 };
 use gstd::{ActorId, Encode, ext, msg, prelude::*};
 
@@ -251,10 +251,7 @@ pub fn validate_shuffle_chain(
         "Final deck length mismatch"
     );
 
-    for (expected, actual) in expected_original
-        .iter()
-        .zip(final_encrypted_deck)
-    {
+    for (expected, actual) in expected_original.iter().zip(final_encrypted_deck) {
         if !compare_points(&expected.c0, &actual.c0) || !compare_points(&expected.c1, &actual.c1) {
             panic!("Mismatch in deck");
         }
