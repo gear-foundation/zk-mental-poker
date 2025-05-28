@@ -6,16 +6,13 @@ use utils::*;
 mod curve;
 mod utils;
 mod verify;
-use crate::services::curve::{
-    decrypt_point, deserialize_bandersnatch_coords, init_deck_and_card_map,
-};
+use crate::services::curve::{calculate_agg_pub_key, decrypt_point, init_deck_and_card_map};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
-    get_prepared_inputs_bytes, verify_batch,
+    validate_shuffle_chain, verify_batch,
 };
-
 const TIME_FOR_MOVE: u64 = 30_000; // 30s
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
@@ -39,9 +36,11 @@ struct Storage {
     partial_table_card_decryptions: HashMap<EncryptedCard, PartialDecryptionsByCard>,
     revealed_table_cards: Vec<Card>,
     original_card_map: HashMap<EdwardsProjective, Card>,
+    original_deck: Vec<EncryptedCard>,
     table_cards: Vec<EncryptedCard>,
     deck_position: usize,
     participants: HashMap<ActorId, Participant>,
+    agg_pub_key: PublicKey,
     // active_participants - players who can place bets
     // not to be confused with those who are in the game, as there are also all in players.
     active_participants: TurnManager<ActorId>,
@@ -110,7 +109,7 @@ pub struct Participant {
     pk: PublicKey,
 }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct PublicKey {
@@ -118,6 +117,7 @@ pub struct PublicKey {
     pub y: [u8; 32],
     pub z: [u8; 32],
 }
+
 static mut STORAGE: Option<Storage> = None;
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -175,13 +175,14 @@ impl PokerService {
                 balance: config.starting_bank,
                 card_1: None,
                 card_2: None,
-                pk,
+                pk: pk.clone(),
             },
         );
         let mut active_participants = TurnManager::new();
         active_participants.add(config.admin_id);
         let vk_shuffle = decode_verifying_key(&vk_shuffle_bytes);
         let vk_decrypt = decode_verifying_key(&vk_decrypt_bytes);
+        let (original_deck, original_card_map) = init_deck_and_card_map();
         unsafe {
             STORAGE = Some(Storage {
                 builtin_bls381_address: ActorId::from(ACTOR_ID),
@@ -202,10 +203,12 @@ impl PokerService {
                 table_cards: Vec::new(),
                 partially_decrypted_cards: HashMap::new(),
                 revealed_table_cards: Vec::new(),
-                original_card_map: init_deck_and_card_map(),
+                original_card_map,
+                original_deck,
                 partial_table_card_decryptions: HashMap::new(),
                 pts_actor_id,
                 factory_actor_id: msg::source(),
+                agg_pub_key: pk,
             });
         }
         Self(())
@@ -263,11 +266,13 @@ impl PokerService {
             },
         );
         storage.active_participants.add(msg_src);
+
         let mut all_registered = false;
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingShuffleVerification;
             all_registered = true;
         }
+        storage.agg_pub_key = calculate_agg_pub_key(storage.agg_pub_key.clone(), pk.clone());
         self.emit_event(Event::Registered {
             participant_id: msg_src,
             pk,
@@ -455,6 +460,14 @@ impl PokerService {
         if storage.status != Status::WaitingShuffleVerification {
             panic("Wrong status");
         }
+
+        validate_shuffle_chain(
+            &instances,
+            &storage.original_deck,
+            &storage.agg_pub_key,
+            &encrypted_deck,
+        );
+
         verify_batch(
             &storage.vk_shuffle,
             instances,
@@ -463,6 +476,7 @@ impl PokerService {
         .await;
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
+        sails_rs::gstd::debug!("GAS AFTER ZK {:?}", sails_rs::gstd::exec::gas_available());
     }
 
     /// Admin-only function to start the poker game after setup.

@@ -146,6 +146,7 @@ pub struct Config {
     pub gas_for_program: u64,
     pub gas_for_reply_deposit: u64,
 }
+
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {
     let api = GearApi::dev().await?;

@@ -1,20 +1,72 @@
-use crate::services::{Card, EncryptedCard, Suit};
+use crate::services::{Card, EncryptedCard, PublicKey, Suit};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
-use ark_ff::{BigInt, PrimeField};
+use ark_ff::{BigInteger, PrimeField};
 use sails_rs::{collections::HashMap, prelude::*};
 
 pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
-    let x = Fq::from_be_bytes_mod_order(&coords[0]);
-    let y = Fq::from_be_bytes_mod_order(&coords[1]);
-    let z = Fq::from_be_bytes_mod_order(&coords[2]);
+    let x = Fq::from_le_bytes_mod_order(&coords[0]);
+    let y = Fq::from_le_bytes_mod_order(&coords[1]);
+    let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
 
     EdwardsProjective::new(x, y, t, z)
 }
 
-pub fn init_deck_and_card_map() -> HashMap<EdwardsProjective, Card> {
-    let mut points_for_map = vec![vec![]; 3];
+fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
+    let x = Fq::from_le_bytes_mod_order(&pk.x);
+    let y = Fq::from_le_bytes_mod_order(&pk.y);
+    let z = Fq::from_le_bytes_mod_order(&pk.z);
+    let t = x * y;
+
+    EdwardsProjective::new(x, y, t, z)
+}
+
+fn serialize_public_key(point: &EdwardsProjective) -> PublicKey {
+    let x = point
+        .x
+        .into_bigint()
+        .to_bytes_le()
+        .try_into()
+        .expect("x not 32 bytes");
+    let y = point
+        .y
+        .into_bigint()
+        .to_bytes_le()
+        .try_into()
+        .expect("y not 32 bytes");
+    let z = point
+        .z
+        .into_bigint()
+        .to_bytes_le()
+        .try_into()
+        .expect("z not 32 bytes");
+
+    PublicKey { x, y, z }
+}
+
+pub fn calculate_agg_pub_key(pk1: PublicKey, pk2: PublicKey) -> PublicKey {
+    let point1 = deserialize_public_key(&pk1);
+    let point2 = deserialize_public_key(&pk2);
+
+    let result = point1 + point2;
+    serialize_public_key(&result)
+}
+
+pub fn compare_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> bool {
+    let x1 = Fq::from_le_bytes_mod_order(&pk1.x);
+    let y1 = Fq::from_le_bytes_mod_order(&pk1.y);
+    let z1 = Fq::from_le_bytes_mod_order(&pk1.z);
+
+    let x2 = Fq::from_le_bytes_mod_order(&pk2.x);
+    let y2 = Fq::from_le_bytes_mod_order(&pk2.y);
+    let z2 = Fq::from_le_bytes_mod_order(&pk2.z);
+
+    (x1 * z2 == x2 * z1) && (y1 * z2 == y2 * z1)
+}
+
+pub fn init_deck_and_card_map() -> (Vec<EncryptedCard>, HashMap<EdwardsProjective, Card>) {
+    let mut points_for_map: Vec<Vec<[u8; 32]>> = vec![vec![]; 3];
 
     let num_cards = 52;
     let base_affine = EdwardsAffine::generator();
@@ -25,17 +77,50 @@ pub fn init_deck_and_card_map() -> HashMap<EdwardsProjective, Card> {
         let point = base_point * scalar;
 
         // Save point coordinates for map building
-        points_for_map[0].push(point.x.into_bigint());
-        points_for_map[1].push(point.y.into_bigint());
-        points_for_map[2].push(point.z.into_bigint());
+        points_for_map[0].push(
+            point
+                .x
+                .into_bigint()
+                .to_bytes_le()
+                .try_into()
+                .expect("Wrong bytes len"),
+        );
+        points_for_map[1].push(
+            point
+                .y
+                .into_bigint()
+                .to_bytes_le()
+                .try_into()
+                .expect("Wrong bytes len"),
+        );
+        points_for_map[2].push(
+            point
+                .z
+                .into_bigint()
+                .to_bytes_le()
+                .try_into()
+                .expect("Wrong bytes len"),
+        );
     }
 
-    let card_map = build_card_map(points_for_map).expect("Invalid deck format");
-    card_map
+    let card_map = build_card_map(points_for_map.clone()).expect("Invalid deck format");
+    let mut encrypted_deck = Vec::with_capacity(num_cards);
+
+    for i in 0..num_cards {
+        let c0 = neutral_element();
+        let c1 = [
+            points_for_map[0][i].to_vec(),
+            points_for_map[1][i].to_vec(),
+            points_for_map[2][i].to_vec(),
+        ];
+
+        encrypted_deck.push(EncryptedCard { c0, c1 });
+    }
+    (encrypted_deck, card_map)
 }
 
 pub fn build_card_map(
-    deck: Vec<Vec<BigInt<4>>>,
+    deck: Vec<Vec<[u8; 32]>>,
 ) -> Result<HashMap<EdwardsProjective, Card>, String> {
     let num_cards = 52;
 
@@ -51,9 +136,9 @@ pub fn build_card_map(
     let mut index = 0;
     for suit in &suits {
         for value in values.clone() {
-            let x = Fq::from_bigint(deck[0][index].clone()).expect("invalid x");
-            let y = Fq::from_bigint(deck[1][index].clone()).expect("invalid y");
-            let z = Fq::from_bigint(deck[2][index].clone()).expect("invalid z");
+            let x = Fq::from_le_bytes_mod_order(&deck[0][index]);
+            let y = Fq::from_le_bytes_mod_order(&deck[1][index]);
+            let z = Fq::from_le_bytes_mod_order(&deck[2][index]);
 
             let point = EdwardsProjective::new(x, y, x * y, z); // t = x * y
             card_map.insert(point, Card::new(suit.clone(), value));
@@ -63,6 +148,18 @@ pub fn build_card_map(
     }
 
     Ok(card_map)
+}
+
+pub fn compare_points(p1: &[Vec<u8>; 3], p2: &[Vec<u8>; 3]) -> bool {
+    let x1 = Fq::from_le_bytes_mod_order(&p1[0]);
+    let y1 = Fq::from_le_bytes_mod_order(&p1[1]);
+    let z1 = Fq::from_le_bytes_mod_order(&p1[2]);
+
+    let x2 = Fq::from_le_bytes_mod_order(&p2[0]);
+    let y2 = Fq::from_le_bytes_mod_order(&p2[1]);
+    let z2 = Fq::from_le_bytes_mod_order(&p2[2]);
+
+    (x1 * z2 == x2 * z1) && (y1 * z2 == y2 * z1)
 }
 
 pub fn find_card_by_point(
@@ -91,6 +188,14 @@ pub fn decrypt_point(
     let c1_point = deserialize_bandersnatch_coords(&encrypted_point.c1);
     let decrypted_point = c1_point + sum;
     find_card_by_point(card_map, &decrypted_point)
+}
+
+fn neutral_element() -> [Vec<u8>; 3] {
+    [
+        vec![0u8; 32],                                      // X = 0
+        vec![1].into_iter().chain(vec![0u8; 31]).collect(), // Y = 1 (LE)
+        vec![1].into_iter().chain(vec![0u8; 31]).collect(), // Z = 1 (LE)
+    ]
 }
 
 #[cfg(test)]
