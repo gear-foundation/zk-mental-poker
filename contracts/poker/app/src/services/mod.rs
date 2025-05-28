@@ -227,6 +227,14 @@ impl PokerService {
         Self(())
     }
 
+    /// Registers a player by sending a transfer request to the PTS contract (starting_bank points).
+    ///
+    /// Panics if:
+    /// - status is not `Registration`;
+    /// - player is already registered.
+    ///
+    /// Sends a message to the PTS contract (pts_actor_id) to transfer points to this contract.
+    /// On success, updates participant data and emits a `Registered` event.
     pub async fn register(&mut self, player_name: String, pk: PublicKey) {
         let storage = self.get_mut();
         if storage.status != Status::Registration {
@@ -273,6 +281,14 @@ impl PokerService {
         .expect("Event Invocation Error");
     }
 
+    /// Cancels player registration and refunds their balance via PTS contract.
+    ///
+    /// Panics if:
+    /// - current status is invalid for cancellation;
+    /// - caller is not a registered player.
+    ///
+    /// Sends a transfer request to PTS contract to return points to the player.
+    /// Removes player data and emits `RegistrationCanceled` event on success.
     pub async fn cancel_registration(&mut self) {
         let storage = self.get_mut();
         let msg_src = msg::source();
@@ -304,6 +320,10 @@ impl PokerService {
             .expect("Event Invocation Error");
     }
 
+    /// Restarts the game, resetting status and refunding bets (if not Finished).
+    /// Panics if caller is not admin.
+    /// Resets game to WaitingShuffleVerification (if full) or Registration status.
+    /// Emits GameRestarted event with new status.
     pub fn restart_game(&mut self) {
         let storage = self.get_mut();
         if msg::source() != storage.config.admin_id {
@@ -330,6 +350,18 @@ impl PokerService {
         .expect("Event Invocation Error");
     }
 
+    /// Admin-only function to terminate the lobby and refund all players.
+    ///
+    /// Panics if:
+    /// - caller is not admin
+    /// - wrong game status (not Registration/WaitingShuffleVerification/Finished)
+    ///
+    /// Performs:
+    /// 1. Batch transfer of all player balances via PTS contract
+    /// 2. Sends DeleteLobby request to PokerFactory
+    /// 3. Emits Killed event and transfers remaining funds to inheritor
+    ///
+    /// WARNING: Irreversible operation
     pub async fn kill(&mut self, inheritor: ActorId) {
         let storage = self.get();
         let msg_src = msg::source();
@@ -374,6 +406,18 @@ impl PokerService {
         exec::exit(inheritor);
     }
 
+    /// Admin-only function to forcibly remove a player and refund their balance.
+    ///
+    /// Panics if:
+    /// - caller is not admin or tries to delete themselves
+    /// - wrong game status (not Registration/WaitingShuffleVerification)
+    /// - player doesn't exist
+    ///
+    /// Performs:
+    /// 1. Transfers player's balance back to user via PTS contract
+    /// 2. Removes player from all participant lists
+    /// 3. Resets status to Registration
+    /// 4. Emits PlayerDeleted event
     pub async fn delete_player(&mut self, player_id: ActorId) {
         let storage = self.get_mut();
         let msg_src = msg::source();
@@ -389,7 +433,7 @@ impl PokerService {
 
         if let Some(participant) = storage.participants.get(&player_id) {
             let request =
-                pts_io::Transfer::encode_call(exec::program_id(), msg_src, participant.balance);
+                pts_io::Transfer::encode_call(exec::program_id(), player_id, participant.balance);
 
             msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
                 .expect("Error in async message to PTS contract")
@@ -435,6 +479,19 @@ impl PokerService {
         sails_rs::gstd::debug!("GAS AFTER ZK {:?}", sails_rs::gstd::exec::gas_available());
     }
 
+    /// Admin-only function to start the poker game after setup.
+    ///
+    /// Panics if:
+    /// - caller is not admin
+    /// - wrong status (not WaitingStart)
+    ///
+    /// Performs:
+    /// 1. Deals cards to players and table
+    /// 2. Processes small/big blinds (handles all-in cases)
+    /// 3. Initializes betting stage
+    /// 4. Updates game status and emits GameStarted event
+    ///
+    /// Note: Handles edge cases where players can't cover blinds
     pub async fn start_game(&mut self) {
         let storage = self.get_mut();
         let msg_src = msg::source();
@@ -644,6 +701,20 @@ impl PokerService {
         }
     }
 
+    /// Processes player actions during betting rounds.
+    ///
+    /// Panics if:
+    /// - Wrong game status
+    /// - Not player's turn
+    /// - Invalid action (e.g. check when bet exists)
+    ///
+    /// Handles:
+    /// - Fold/Call/Check/Raise/AllIn actions
+    /// - Turn timers and skips
+    /// - Game end conditions (single player left)
+    /// - Stage transitions
+    ///
+    /// Emits TurnIsMade and NextStage events
     pub fn turn(&mut self, action: Action) {
         debug!("TURN");
         let player = msg::source();
@@ -876,7 +947,6 @@ impl PokerService {
     }
 
     pub fn card_disclosure(&mut self, id_to_cards: Vec<(ActorId, (Card, Card))>) {
-        // TODO: add necessary logic (check difference cards, check msg source)
         let storage = self.get_mut();
         let mut expected_players: Vec<ActorId> = storage
             .active_participants
@@ -993,5 +1063,11 @@ impl PokerService {
             .clone()
             .into_iter()
             .collect()
+    }
+    pub fn factory_actor_id(&self) -> ActorId {
+        self.get().factory_actor_id
+    }
+    pub fn pts_actor_id(&self) -> ActorId {
+        self.get().pts_actor_id
     }
 }

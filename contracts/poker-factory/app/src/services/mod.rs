@@ -91,6 +91,18 @@ impl PokerFactoryService {
         Self(())
     }
 
+    /// Creates new poker lobby with provided config.
+    ///
+    /// Panics if:
+    /// - Insufficient PTS balance
+    /// - Program creation fails
+    ///
+    /// Performs:
+    /// 1. Checks player's PTS balance
+    /// 2. Deploys new lobby program
+    /// 3. Sets lobby as PTS admin
+    /// 4. Transfers starting bank to lobby
+    /// 5. Stores lobby info and emits LobbyCreated event
     pub async fn create_lobby(&mut self, init_lobby: LobbyConfig, pk: PublicKey) {
         let storage = self.get_mut();
         let msg_src = msg::source();
@@ -154,17 +166,37 @@ impl PokerFactoryService {
         .expect("Notification Error");
     }
 
+    /// Deletes lobby from registry. Admin or lobby itself only.
+    /// Panics if:
+    /// - Lobby doesn't exist
+    /// - Caller lacks permissions
+    /// Emits LobbyDeleted event on success.
     pub async fn delete_lobby(&mut self, lobby_address: ActorId) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-        let lobby = storage.lobbies.get(&lobby_address).expect("Lobby must be exist");
-        if msg_src != lobby.admin_id && msg_src != lobby_address {
+        let lobby = storage
+            .lobbies
+            .get(&lobby_address)
+            .expect("Lobby must be exist");
+        if msg_src != lobby.admin_id
+            && msg_src != lobby_address
+            && !storage.admins.contains(&msg_src)
+        {
             panic!("Access denied");
         }
         storage.lobbies.remove(&lobby_address);
 
         self.emit_event(Event::LobbyDeleted { lobby_address })
             .expect("Notification Error");
+    }
+
+    pub fn add_admin(&mut self, new_admin_id: ActorId) {
+        let storage = self.get_mut();
+        storage.admins.insert(new_admin_id);
+    }
+    pub fn delete_admin(&mut self, id: ActorId) {
+        let storage = self.get_mut();
+        storage.admins.remove(&id);
     }
 
     pub fn pts_actor_id(&self) -> ActorId {
@@ -179,11 +211,10 @@ impl PokerFactoryService {
     pub fn config(&self) -> Config {
         self.get().config.clone()
     }
-    pub fn vk_shuffle_bytes(&self) -> VerifyingKeyBytes {
+    pub fn vk_shuffle_bytes(&self) -> Vec<u8> {
         self.get().vk_shuffle_bytes.clone()
     }
-    pub fn vk_decrypt_bytes(&self) -> VerifyingKeyBytes {
+    pub fn vk_decrypt_bytes(&self) -> Vec<u8> {
         self.get().vk_decrypt_bytes.clone()
     }
-
 }
