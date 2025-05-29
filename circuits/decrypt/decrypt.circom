@@ -26,4 +26,4 @@ template Decrypt() {
     isValid === 1;
 }
 
-component main {public [c0]}  = Decrypt();
+component main {public [c0, expected]}  = Decrypt();

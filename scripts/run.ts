@@ -681,7 +681,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
 
     const tableCards: CipherCard[] = [];
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const cardIndex = usedCards + i;
 
       const c0: ECPoint = {
@@ -703,7 +703,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
     const playerDecryptionsData = [];
 
     const partialSumDecsTable: ECPoint[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       partialSumDecsTable.push(neutral);
     }
     for (let playerIndex = 0; playerIndex < numPlayers; playerIndex++) {
@@ -712,7 +712,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
 
       const decryptions = [];
 
-      for (let cardIndex = 0; cardIndex < 3; cardIndex++) {
+      for (let cardIndex = 0; cardIndex < 5; cardIndex++) {
         const card = tableCards[cardIndex];
         const c0 = card.c0;
     
@@ -752,6 +752,11 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
               Z: card.c1.Z.toString()
             }
           },
+          dec: {
+            X: dec.X.toString(),
+            Y: dec.Y.toString(),
+            Z: dec.Z.toString()
+          },
           proof,
           publicSignals
         });
@@ -765,7 +770,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
         decryptions
       });
     }
-    writeFileSync("table_decryptions_ater_preflop.json", JSON.stringify(playerDecryptionsData, null, 2));
+    writeFileSync("output/table_decryptions_after_preflop.json", JSON.stringify(playerDecryptionsData, null, 2));
 
 
   }
