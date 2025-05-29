@@ -1,16 +1,20 @@
-import { compressDeck, decompressDeck, matrixMultiplication } from "./utilities";
+import { scalarMul, projectiveAdd, generateRandomScalar } from "./utilities";
 
 // todo
 export type BabyJub = any;
 export type EC = any;
 
+
 /// Computes ElGamal Encryption.
-export function elgamalEncrypt(babyJub: BabyJub, ic0: EC, ic1: EC, r: bigint, pk: EC): EC[] {
-  return [
-    babyJub.addPoint(babyJub.mulPointEscalar(babyJub.Base8, r), ic0), // c0 = r * g + ic0
-    babyJub.addPoint(babyJub.mulPointEscalar(pk, r), ic1), // c1 = r * pk + ic1
-  ];
+export function elgamalEncrypt(F: any, a: bigint, d: bigint, G: any, pk: any, msg: any) {
+  const r = generateRandomScalar(50);
+  const rG = scalarMul(F, a, d, G, r);
+  const rPK = scalarMul(F, a, d, pk, r);
+  const c0 = projectiveAdd(F, a, d, rG, { ...msg.ic0 });
+  const c1 = projectiveAdd(F, a, d, rPK, { ...msg.ic1 });
+  return { c0, c1, r };
 }
+
 
 /// Computes ElGamal Decryption.
 export function elgamalDecrypt(babyJub: BabyJub, c0: EC, c1: EC, sk: bigint): EC {
@@ -20,72 +24,58 @@ export function elgamalDecrypt(babyJub: BabyJub, c0: EC, c1: EC, sk: bigint): EC
   return babyJub.addPoint(c1, babyJub.mulPointEscalar(c0, r - sk));
 }
 
-/// Shuffles `numCards` cards and encrypts individual cards, given an randomness array `R`, a permutation matrix `A`,
-/// input card deck `X`, and a public key `pk`. Each card is represented as 2 elliptic curve points
-//      (c0i.x, c0i.y, c1i.x, c1i.y)
-/// Layout of X: [
-///     c01.x, ..., c0n.x,
-///     c01.y, ..., c0n.y,
-///     c11.x, ..., c1n.x,
-///     c11.y, ..., c1n.y,
-/// ]
-export function shuffleEncryptPlaintext(
-  babyjub: BabyJub,
-  numCards: number,
-  A: bigint[],
-  X: bigint[],
-  R: bigint[],
-  pk: EC,
-): bigint[] {
-  const B: bigint[] = [];
-  for (let i = 0; i < 4; i++) {
-    const tmp: bigint[] = matrixMultiplication(
-      A,
-      X.slice(i * numCards, (i + 1) * numCards),
-      numCards,
-      numCards,
-    );
-    for (let j = 0; j < numCards; j++) {
-      B.push(tmp[j]);
-    }
+export function generatePermutation(n: number): number[] {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
-  const ECOutArr = [];
-  for (let i = 0; i < numCards; i++) {
-    const ic0: EC = [babyjub.F.e(B[i]), babyjub.F.e(B[numCards + i])];
-    const ic1: EC = [babyjub.F.e(B[2 * numCards + i]), babyjub.F.e(B[3 * numCards + i])];
-    const out = elgamalEncrypt(babyjub, ic0, ic1, R[i], pk);
-    ECOutArr.push(out);
-  }
-  const Y: bigint[] = [];
-  for (let i = 0; i < 2; i++) {
-    for (let j = 0; j < 2; j++) {
-      for (let k = 0; k < ECOutArr.length; k++) {
-        Y[(i * 2 + j) * numCards + k] = BigInt(babyjub.F.toString(ECOutArr[k][i][j]));
-      }
-    }
-  }
-  return Y;
+  return arr;
 }
 
-/// Shuffle encrypt version2 that uses compressed format of elliptic curves.
-export function shuffleEncryptV2Plaintext(
-  babyjub: BabyJub,
-  numCards: number,
-  A: bigint[],
-  R: bigint[],
-  pk: EC,
-  UX0: bigint[],
-  UX1: bigint[],
-  UY0_delta: bigint[],
-  UY1_delta: bigint[],
-  s_u: bigint[],
-): {
-  X0: bigint[];
-  X1: bigint[];
-  delta0: bigint[];
-  delta1: bigint[];
-  selector: bigint[];
-} {
-  const U = decompressDeck(UX0, UX1, UY0_delta, UY1_delta, s_u);
-  return compressDeck(shuffleEncryptPlaintext(babyjub, numCards, A, U, R, pk));
+export function permuteMatrix(matrix: bigint[][], permutation: number[]): bigint[][] {
+  const permuted = Array.from({ length: 6 }, () => Array(52));
+  for (let row = 0; row < 6; row++) {
+    for (let col = 0; col < 52; col++) {
+      permuted[row][col] = matrix[row][permutation[col]];
+    }
+  }
+  return permuted;
+}
+
+export function elgamalEncryptDeck(
+  F: any,
+  a: bigint,
+  d: bigint,
+  G: any,
+  pk: any,
+  deck: bigint[][],
+): { encrypted: bigint[][]; rScalars: bigint[] } {
+  const encrypted = Array.from({ length: 6 }, () => Array(52).fill(0n));
+  const rScalars: bigint[] = [];
+
+  for (let i = 0; i < 52; i++) {
+    const ic0 = {
+      X: deck[0][i],
+      Y: deck[1][i],
+      Z: deck[2][i],
+    };
+    const ic1 = {
+      X: deck[3][i],
+      Y: deck[4][i],
+      Z: deck[5][i],
+    };
+
+    const { c0, c1, r } = elgamalEncrypt(F, a, d, G, pk, { ic0, ic1 });
+    rScalars.push(r);
+
+    encrypted[0][i] = c0.X;
+    encrypted[1][i] = c0.Y;
+    encrypted[2][i] = c0.Z;
+    encrypted[3][i] = c1.X;
+    encrypted[4][i] = c1.Y;
+    encrypted[5][i] = c1.Z;
+  }
+
+  return { encrypted, rScalars };
 }

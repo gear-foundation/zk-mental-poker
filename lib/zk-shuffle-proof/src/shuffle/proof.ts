@@ -1,6 +1,4 @@
 //import { Proof, packToSolidityProof, SolidityProof } from "@semaphore-protocol/proof";
-import { BabyJub, Deck, ecX2Delta, prepareDecryptData, prepareShuffleDeck } from "./utilities";
-import { shuffleEncryptV2Plaintext } from "./plaintext";
 const snarkjs = require("snarkjs");
 
 //export { packToSolidityProof, SolidityProof };

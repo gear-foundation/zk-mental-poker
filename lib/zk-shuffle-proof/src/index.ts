@@ -10,12 +10,17 @@ export {
     BabyJub,
     EC,
     decompressDeck,
+    generateRandomScalar,
+    projectiveAdd,
+    scalarMul,
   } from './shuffle/utilities';
   
   export {
-    shuffleEncryptV2Plaintext,
     elgamalEncrypt,
-    elgamalDecrypt
+    elgamalDecrypt, 
+    elgamalEncryptDeck,
+    permuteMatrix,
+    generatePermutation
   } from './shuffle/plaintext';
   
   export {

@@ -1,10 +1,89 @@
 import { BigNumber } from "ethers";
 const Scalar = require("ffjavascript").Scalar;
+// @ts-ignore
+import { F1Field } from "ffjavascript";
+import { randomBytes } from 'crypto';
+
+const q = BigInt("52435875175126190479447740508185965837690552500527637822603658699938581184513"); // BLS12-381 scalar field
+const F = new F1Field(q);
+const a = BigInt(-5);
+const d = 45022363124591815672509500913686876175488063829319466900776701791074614335719n;
+
+const base = {
+  X: BigInt("0x29c132cc2c0b34c5743711777bbe42f32b79c022ad998465e1e71866a252ae18"),
+  Y: BigInt("0x2a6c669eda123e0f157d8b50badcd586358cad81eee464605e3167b6cc974166"),
+  Z: 1n,
+};
 
 // todo
 export type BabyJub = any;
 export type EC = any;
 export type Deck = any;
+
+export function generateRandomScalar(numBits: number): bigint {
+  const byteLength = Math.ceil(numBits / 8);
+  const max = 1n << BigInt(numBits);
+
+  while (true) {
+      const buf = randomBytes(byteLength);
+      let sk = BigInt("0x" + buf.toString("hex"));
+      if (sk < max) return sk;
+  }
+}
+export function scalarMul(
+  F: F1Field,
+  a: bigint,
+  d: bigint,
+  P: { X: bigint, Y: bigint, Z: bigint },
+  n: bigint
+): { X: bigint, Y: bigint, Z: bigint } {
+  if (n === 0n) {
+    return { X: 0n, Y: 1n, Z: 1n }; // Нейтральный элемент
+  }
+  let R = { X: 0n, Y: 1n, Z: 1n }; // Нейтральный аккумулятор
+  let Q = { ...P }; // Копия P для итеративного удвоения
+
+  while (n > 0n) {
+    if (n & 1n) {
+      R = projectiveAdd(F, a, d, R, Q);
+    }
+    Q = projectiveAdd(F, a, d, Q, Q);
+    n >>= 1n;
+  }
+
+  return R;
+}
+
+export function projectiveAdd(
+  F: any,
+  a: bigint,
+  d: bigint,
+  P1: { X: bigint, Y: bigint, Z: bigint },
+  P2: { X: bigint, Y: bigint, Z: bigint }
+): { X: bigint, Y: bigint, Z: bigint } {
+  const { X: X1, Y: Y1, Z: Z1 } = P1;
+  const { X: X2, Y: Y2, Z: Z2 } = P2;
+
+  const A = F.mul(Z1, Z2);                // A = Z1 * Z2
+  const B = F.square(A);                  // B = A^2
+  const C = F.mul(X1, X2);                // C = X1 * X2
+  const D = F.mul(Y1, Y2);                // D = Y1 * Y2
+  const E = F.mul(F.mul(d, C), D);        // E = d * C * D
+  const F_ = F.sub(B, E);                 // F = B - E
+  const G = F.add(B, E);                  // G = B + E
+
+  const X1plusY1 = F.add(X1, Y1);
+  const X2plusY2 = F.add(X2, Y2);
+  const X1Y1_X2Y2 = F.mul(X1plusY1, X2plusY2); // (X1 + Y1)(X2 + Y2)
+  const CD = F.add(C, D);                        // C + D
+  const E_ = F.sub(X1Y1_X2Y2, CD);               // E = (X1 + Y1)(X2 + Y2) - (C + D)
+
+  const X3 = F.mul(F.mul(A, F_), E_);     // X3 = A * F * E
+  const Y3 = F.mul(F.mul(A, G), F.sub(D, F.mul(a, C))); // Y3 = A * G * (D - a * C)
+  const Z3 = F.mul(F_, G);                // Z3 = F * G
+
+  return { X: X3, Y: Y3, Z: Z3 };
+}
 
 /// Throws an error if `condition` is not true.
 export function assert(condition: boolean, message: string) {
@@ -56,12 +135,15 @@ export function num2Bits(num: bigint, length: number): boolean[] {
 }
 
 // Generates a secret key between 0 ~ min(2**numBits-1, Fr size).
-export function keyGen(babyjub: BabyJub, numBits: bigint): { g: EC; sk: bigint; pk: EC } {
-  const sk = sampleFieldElements(babyjub, 1n)[0];
+export function keyGen(numBits: number): {
+  sk: bigint;
+  pk: { X: bigint; Y: bigint; Z: bigint };
+} {
+  const sk = generateRandomScalar(numBits);
+  const pk = scalarMul(F, a, d, base, sk);
   return {
-    g: babyjub.Base8,
     sk,
-    pk: babyjub.mulPointEscalar(babyjub.Base8, sk),
+    pk,
   };
 }
 
@@ -96,33 +178,32 @@ export function samplePermutation(n: number): bigint[] {
 }
 
 /// Initializes a deck of `numCards` cards. Each card is represented as 2 elliptic curve
-/// points (c0i.x, c0i.y, c1i.x, c1i.y)
+/// points (c0i.x, c0i.y,c0i.z, c1i.x, c1i.y, c1i.z)
 /// Layout: [
 ///     c01.x, ..., c0n.x,
 ///     c01.y, ..., c0n.y,
+///     c01.z, ..., c0n.z,
 ///     c11.x, ..., c1n.x,
 ///     c11.y, ..., c1n.y,
+///     c11.z, ..., c1n.z,
 /// ]
-export function initDeck(babyjub: BabyJub, numCards: number): bigint[] {
-  const cards = [];
-  for (let i = 1; i <= numCards; i++) {
-    cards.push(babyjub.mulPointEscalar(babyjub.Base8, i));
-  }
-  const deck: bigint[] = [];
+export function initDeck(numCards: number): bigint[][] {
+  const deck: bigint[][] = Array.from({ length: 6 }, () => Array(numCards).fill(0n));
+
   for (let i = 0; i < numCards; i++) {
-    deck.push(0n);
+      const scalar = BigInt(i + 1);
+      deck[0][i] = 0n;
+      deck[1][i] = 1n;
+      deck[2][i] = 1n;
+      const P = scalarMul(F, a, d, base, scalar);
+      deck[3][i] = P.X;
+      deck[4][i] = P.Y;
+      deck[5][i] = P.Z;
   }
-  for (let i = 0; i < numCards; i++) {
-    deck.push(1n);
-  }
-  for (let i = 0; i < numCards; i++) {
-    deck.push(Scalar.fromRprLE(babyjub.F.fromMontgomery(cards[i][0])));
-  }
-  for (let i = 0; i < numCards; i++) {
-    deck.push(Scalar.fromRprLE(babyjub.F.fromMontgomery(cards[i][1])));
-  }
+
   return deck;
 }
+
 
 /// Searches the deck for a card. If the card is in the deck, returns the card index.
 /// If the card is not in the deck, return -1.

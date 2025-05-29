@@ -15,7 +15,6 @@ pub use verify::{
     VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
     validate_shuffle_chain, verify_batch,
 };
-const TIME_FOR_MOVE: u64 = 30_000; // 30s
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
@@ -98,6 +97,7 @@ pub struct Config {
     big_blind: u128,
     number_of_participants: u16,
     starting_bank: u128,
+    time_per_move_ms: u64,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -737,7 +737,8 @@ impl PokerService {
 
         let last_active_time = betting.last_active_time.expect("No last active time");
         let current_time = exec::block_timestamp();
-        let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
+        let number_of_passes = (current_time - last_active_time) / storage.config.time_per_move_ms;
+
         if number_of_passes != 0 {
             let current_turn_player_id = storage
                 .active_participants
