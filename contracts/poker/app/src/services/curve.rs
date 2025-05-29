@@ -1,7 +1,7 @@
-use crate::services::{Card, EncryptedCard, PublicKey, Suit};
+use crate::services::{Card, EncryptedCard, PublicKey, Suit, VerificationVariables};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInteger, One, PrimeField, Zero};
 use sails_rs::{collections::HashMap, prelude::*};
 
 pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
@@ -10,7 +10,8 @@ pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjecti
     let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
 
-    EdwardsProjective::new(x, y, t, z)
+    EdwardsProjective::new_unchecked(x, y, t, z).into_affine().into()
+
 }
 
 fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
@@ -65,8 +66,8 @@ pub fn compare_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> bool {
     (x1 * z2 == x2 * z1) && (y1 * z2 == y2 * z1)
 }
 
-pub fn init_deck_and_card_map() -> (Vec<EncryptedCard>, HashMap<EdwardsProjective, Card>) {
-    let mut points_for_map: Vec<Vec<[u8; 32]>> = vec![vec![]; 3];
+pub fn init_deck_and_card_map() -> (Vec<EdwardsProjective>, HashMap<EdwardsProjective, Card>) {
+    let mut encrypted_deck: Vec<EdwardsProjective> = Vec::with_capacity(52);
 
     let num_cards = 52;
     let base_affine = EdwardsAffine::generator();
@@ -76,58 +77,15 @@ pub fn init_deck_and_card_map() -> (Vec<EncryptedCard>, HashMap<EdwardsProjectiv
         let scalar = Fr::from(i as u64);
         let point = base_point * scalar;
 
-        // Save point coordinates for map building
-        points_for_map[0].push(
-            point
-                .x
-                .into_bigint()
-                .to_bytes_le()
-                .try_into()
-                .expect("Wrong bytes len"),
-        );
-        points_for_map[1].push(
-            point
-                .y
-                .into_bigint()
-                .to_bytes_le()
-                .try_into()
-                .expect("Wrong bytes len"),
-        );
-        points_for_map[2].push(
-            point
-                .z
-                .into_bigint()
-                .to_bytes_le()
-                .try_into()
-                .expect("Wrong bytes len"),
-        );
+        encrypted_deck.push(point);
     }
 
-    let card_map = build_card_map(points_for_map.clone()).expect("Invalid deck format");
-    let mut encrypted_deck = Vec::with_capacity(num_cards);
+    let card_map = build_card_map(encrypted_deck.clone());
 
-    for i in 0..num_cards {
-        let c0 = neutral_element();
-        let c1 = [
-            points_for_map[0][i].to_vec(),
-            points_for_map[1][i].to_vec(),
-            points_for_map[2][i].to_vec(),
-        ];
-
-        encrypted_deck.push(EncryptedCard { c0, c1 });
-    }
     (encrypted_deck, card_map)
 }
 
-pub fn build_card_map(
-    deck: Vec<Vec<[u8; 32]>>,
-) -> Result<HashMap<EdwardsProjective, Card>, String> {
-    let num_cards = 52;
-
-    if deck.len() != 3 || deck[0].len() != num_cards {
-        return Err("Invalid deck shape".to_string());
-    }
-
+pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective, Card> {
     let mut card_map = HashMap::new();
 
     let suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
@@ -136,18 +94,13 @@ pub fn build_card_map(
     let mut index = 0;
     for suit in &suits {
         for value in values.clone() {
-            let x = Fq::from_le_bytes_mod_order(&deck[0][index]);
-            let y = Fq::from_le_bytes_mod_order(&deck[1][index]);
-            let z = Fq::from_le_bytes_mod_order(&deck[2][index]);
-
-            let point = EdwardsProjective::new(x, y, x * y, z); // t = x * y
-            card_map.insert(point, Card::new(suit.clone(), value));
+            card_map.insert(deck[index], Card::new(suit.clone(), value));
 
             index += 1;
         }
     }
 
-    Ok(card_map)
+    card_map
 }
 
 pub fn compare_points(p1: &[Vec<u8>; 3], p2: &[Vec<u8>; 3]) -> bool {
@@ -162,13 +115,28 @@ pub fn compare_points(p1: &[Vec<u8>; 3], p2: &[Vec<u8>; 3]) -> bool {
     (x1 * z2 == x2 * z1) && (y1 * z2 == y2 * z1)
 }
 
+pub fn compare_projective_and_coords(
+    projective: &EdwardsProjective,
+    coords: &[Vec<u8>; 3],
+) -> bool {
+    let x2 = Fq::from_le_bytes_mod_order(&coords[0]);
+    let y2 = Fq::from_le_bytes_mod_order(&coords[1]);
+    let z2 = Fq::from_le_bytes_mod_order(&coords[2]);
+
+    points_equal_coords(&projective.x, &projective.y, &projective.z, &x2, &y2, &z2)
+}
+
+#[inline(always)]
+fn points_equal_coords(x1: &Fq, y1: &Fq, z1: &Fq, x2: &Fq, y2: &Fq, z2: &Fq) -> bool {
+    (x1 * z2 == x2 * z1) && (y1 * z2 == y2 * z1)
+}
+
 pub fn find_card_by_point(
     card_map: &HashMap<EdwardsProjective, Card>,
     point: &EdwardsProjective,
 ) -> Option<Card> {
-    let affine = point.into_affine();
     card_map.iter().find_map(|(p, card)| {
-        if p.into_affine() == affine {
+        if (point.x * p.z == p.x * point.z) && (point.y * p.z == p.y * point.z) {
             Some(card.clone())
         } else {
             None
@@ -188,14 +156,6 @@ pub fn decrypt_point(
     let c1_point = deserialize_bandersnatch_coords(&encrypted_point.c1);
     let decrypted_point = c1_point + sum;
     find_card_by_point(card_map, &decrypted_point)
-}
-
-fn neutral_element() -> [Vec<u8>; 3] {
-    [
-        vec![0u8; 32],                                      // X = 0
-        vec![1].into_iter().chain(vec![0u8; 31]).collect(), // Y = 1 (LE)
-        vec![1].into_iter().chain(vec![0u8; 31]).collect(), // Z = 1 (LE)
-    ]
 }
 
 #[cfg(test)]
@@ -299,18 +259,18 @@ mod tests {
         let mut partial_decryptions = Vec::new();
         for i in 0..3 {
             let sk_c0 = -(c0 * secret_keys[i]);
-            let x = sk_c0.x.into_bigint().to_bytes_le();
-            let y = sk_c0.y.into_bigint().to_bytes_le();
-            let z = sk_c0.z.into_bigint().to_bytes_le();
+            let x = sk_c0.x.to_bytes_le();
+            let y = sk_c0.y.to_bytes_le();
+            let z = sk_c0.z.to_bytes_le();
             partial_decryptions.push([x, y, z]);
         }
 
-        let c0x = c0.x.into_bigint().to_bytes_le();
-        let c0y = c0.y.into_bigint().to_bytes_le();
-        let c0z = c0.z.into_bigint().to_bytes_le();
-        let c1x = c1.x.into_bigint().to_bytes_le();
-        let c1y = c1.y.into_bigint().to_bytes_le();
-        let c1z = c1.z.into_bigint().to_bytes_le();
+        let c0x = c0.x.to_bytes_le();
+        let c0y = c0.y.to_bytes_le();
+        let c0z = c0.z.to_bytes_le();
+        let c1x = c1.x.to_bytes_le();
+        let c1y = c1.y.to_bytes_le();
+        let c1z = c1.z.to_bytes_le();
 
         let encrypted_card = EncryptedCard {
             c0: [c0x, c0y, c0z],
@@ -319,7 +279,6 @@ mod tests {
         let decrypted_point = decrypt_point(&card_map, &encrypted_card, partial_decryptions)
             .expect("Point is not found");
         assert_eq!(decrypted_point, *card);
-        println!("decrypted_point {:?}", decrypted_point);
     }
 
     #[test]
@@ -364,11 +323,98 @@ mod tests {
                 "diamonds" => Suit::Diamonds,
                 "clubs" => Suit::Clubs,
                 "spades" => Suit::Spades,
-                other => panic!("Unknown suit: {}", other),
+                _ => panic!("Unknown suit"),
             };
 
             json_map.insert(point, Card::new(suit, rank));
         }
         assert_eq!(card_map, json_map, "Rust-generated map must match JSON");
     }
+}
+
+pub fn check_decrypted_points(
+    proofs: &[VerificationVariables],
+    encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
+    cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
+) -> bool {
+    let grouped = group_partial_decryptions_by_c0(proofs);
+
+    let mut results = HashMap::new();
+
+    for (c0_coords, partials) in grouped {
+        let c1_coords = encrypted_cards
+            .iter()
+            .flat_map(|(_, cards)| cards)
+            .find(|c| compare_points(&c.c0, &c0_coords))
+            .map(|c| &c.c1);
+        let Some(c1_coords) = c1_coords else {
+            return false;
+        };
+        let decryption_sum = sum_partial_decryptions(&partials);
+        let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
+
+        results.insert(c0_coords, decrypted);
+    }
+
+    for (c0_coords, decrypted_point) in results {
+        let Some(expected_point_coords) = cards_by_player
+            .iter()
+            .flat_map(|(_, cards)| cards)
+            .find(|c| compare_points(&c.c0, &c0_coords))
+            .map(|c| &c.c1)
+        else {
+            return false;
+        };
+
+        if !compare_projective_and_coords(&decrypted_point, &expected_point_coords) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn group_partial_decryptions_by_c0(
+    proofs: &[VerificationVariables],
+) -> HashMap<[Vec<u8>; 3], Vec<[Vec<u8>; 3]>> {
+    let mut map = HashMap::new();
+
+    for proof in proofs {
+        let (c0, expected) = parse_partial_decryption_inputs(&proof.public_input);
+        map.entry(c0).or_insert_with(Vec::new).push(expected);
+    }
+
+    map
+}
+
+fn parse_partial_decryption_inputs(public_input: &[Vec<u8>]) -> ([Vec<u8>; 3], [Vec<u8>; 3]) {
+    let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
+
+    if is_valid != Fq::one() {
+        panic!("Invalid proof");
+    }
+    let c0 = [
+        public_input[1].clone(),
+        public_input[2].clone(),
+        public_input[3].clone(),
+    ];
+    let expected = [
+        public_input[4].clone(),
+        public_input[5].clone(),
+        public_input[6].clone(),
+    ];
+    (c0, expected)
+}
+
+fn sum_partial_decryptions(partials: &[[Vec<u8>; 3]]) -> EdwardsProjective {
+    partials
+        .iter()
+        .fold(EdwardsProjective::zero(), |acc, coord| {
+            sails_rs::gstd::debug!("GAS 1 {:?}", sails_rs::gstd::exec::gas_available());
+            let p = deserialize_bandersnatch_coords(coord);
+            sails_rs::gstd::debug!("GAS 2 {:?}", sails_rs::gstd::exec::gas_available());
+            let sum = acc + p;
+            sails_rs::gstd::debug!("GAS 3 {:?}", sails_rs::gstd::exec::gas_available());
+            sum
+        })
 }
