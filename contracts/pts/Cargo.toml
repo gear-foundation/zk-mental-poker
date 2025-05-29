@@ -1,0 +1,26 @@
+[workspace]
+
+members = ["client"]
+
+
+[package]
+name = "pts"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pts-app = { path = "app" }
+
+[build-dependencies]
+pts-app = { path = "app" }
+sails-rs = { version = "0.8.0", features = ["wasm-builder"] }
+sails-idl-gen = "0.8.0"
+
+[dev-dependencies]
+pts = { path = ".", features = ["wasm-binary"] }
+pts-client = { path = "client" }
+sails-rs = { version = "0.8.0", features = ["gtest"] }
+tokio = { version = "1.41", features = ["rt", "macros"] }
+
+[features]
+wasm-binary = []

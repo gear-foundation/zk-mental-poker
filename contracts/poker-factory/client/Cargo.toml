@@ -1,0 +1,16 @@
+[package]
+name = "poker-factory-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mockall = { version = "0.12", optional = true }
+sails-rs = "0.8.0"
+
+[build-dependencies]
+poker-factory-app = { path = "../app" }
+sails-client-gen = "0.8.0"
+sails-idl-gen = "0.8.0"
+
+[features]
+mocks = ["sails-rs/mockall", "dep:mockall"]

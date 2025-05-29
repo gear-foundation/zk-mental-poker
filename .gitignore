@@ -24,7 +24,8 @@ witness_calculator.js
 *_constraints.json
 scripts/types/
 .DS_STORE
-
+contracts/poker-factory/target
+contracts/poker/target
 # circuits
 *.vkey.json
 
@@ -41,4 +42,3 @@ scripts/types/
 coverage*
 
 pot*
-
