@@ -1,6 +1,7 @@
+use crate::services::EdwardsProjective;
 use crate::services::{
     EncryptedCard, PublicKey,
-    curve::{compare_points, compare_public_keys},
+    curve::{compare_points, compare_public_keys, compare_projective_and_coords},
 };
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ff::{One, PrimeField};
@@ -222,43 +223,38 @@ async fn prepare_inputs(
 
 pub fn validate_shuffle_chain(
     instances: &[VerificationVariables],
-    original_deck: &[EncryptedCard],
+    original_deck: &[EdwardsProjective],
     expected_pub_key: &PublicKey,
     final_encrypted_deck: &[EncryptedCard],
 ) {
-    let mut expected_original = original_deck.to_vec();
+    let (original_first, permuted_first, pk_first) =
+        parse_original_and_permuted(&instances[0].public_input);
+    assert!(
+        compare_public_keys(expected_pub_key, &pk_first),
+        "Wrong aggregated public key in the first shuffle"
+    );
+    assert_initial_deck_matches(&original_deck, &original_first);
 
-    for (i, instance) in instances.iter().enumerate() {
+    let mut current = permuted_first;
+
+    for instance in &instances[1..instances.len() - 1] {
         let (original, permuted, pk) = parse_original_and_permuted(&instance.public_input);
-
         assert!(
             compare_public_keys(expected_pub_key, &pk),
-            "Wrong aggregated public key"
+            "Wrong aggregated public key in intermediate shuffle"
         );
-
-        if i == 0 {
-            assert_initial_deck_matches(&expected_original, &original);
-        } else {
-            assert_eq!(original, expected_original, "Mismatch in shuffle chain");
-        }
-
-        expected_original = permuted;
+        assert_eq!(original, current, "Mismatch in intermediate shuffle chain");
+        current = permuted;
     }
 
-    assert_eq!(
-        expected_original.len(),
-        final_encrypted_deck.len(),
-        "Final deck length mismatch"
-    );
-
-    for (expected, actual) in expected_original.iter().zip(final_encrypted_deck) {
+    for (expected, actual) in current.iter().zip(final_encrypted_deck) {
         if !compare_points(&expected.c0, &actual.c0) || !compare_points(&expected.c1, &actual.c1) {
             panic!("Mismatch in deck");
         }
     }
 }
 
-fn assert_initial_deck_matches(expected: &[EncryptedCard], actual: &[EncryptedCard]) {
+fn assert_initial_deck_matches(expected: &[EdwardsProjective], actual: &[EncryptedCard]) {
     assert_eq!(
         expected.len(),
         actual.len(),
@@ -266,7 +262,7 @@ fn assert_initial_deck_matches(expected: &[EncryptedCard], actual: &[EncryptedCa
     );
 
     for (e, a) in expected.iter().zip(actual) {
-        if !compare_points(&e.c1, &a.c1) {
+        if !compare_projective_and_coords(&e, &a.c1) {
             panic!("Mismatch in initial deck");
         }
     }
@@ -295,7 +291,7 @@ pub fn parse_original_and_permuted(
         panic!("Invalid proof: is_valid != 1");
     }
 
-    // // pk[3]
+    // pk[3]
     let pk = PublicKey {
         x: public_input[1]
             .clone()

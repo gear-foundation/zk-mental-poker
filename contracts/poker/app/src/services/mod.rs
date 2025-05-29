@@ -6,7 +6,9 @@ use utils::*;
 mod curve;
 mod utils;
 mod verify;
-use crate::services::curve::{calculate_agg_pub_key, decrypt_point, init_deck_and_card_map};
+use crate::services::curve::{
+    calculate_agg_pub_key, check_decrypted_points, decrypt_point, init_deck_and_card_map,
+};
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
@@ -36,7 +38,7 @@ struct Storage {
     partial_table_card_decryptions: HashMap<EncryptedCard, PartialDecryptionsByCard>,
     revealed_table_cards: Vec<Card>,
     original_card_map: HashMap<EdwardsProjective, Card>,
-    original_deck: Vec<EncryptedCard>,
+    original_deck: Vec<EdwardsProjective>,
     table_cards: Vec<EncryptedCard>,
     deck_position: usize,
     participants: HashMap<ActorId, Participant>,
@@ -317,7 +319,7 @@ impl PokerService {
         }
 
         self.emit_event(Event::RegistrationCanceled { player_id: msg_src })
-            .expect("Event Invocation Error");
+            .expect("Event Error");
     }
 
     /// Restarts the game, resetting status and refunding bets (if not Finished).
@@ -575,14 +577,14 @@ impl PokerService {
         let deck = storage
             .encrypted_deck
             .as_ref()
-            .expect("Encrypted deck is not initialized");
+            .expect("No encrypted deck");
         let mut pos = storage.deck_position;
 
         let mut dealt = Vec::new();
         sails_rs::gstd::debug!("DEAL ENCRYPTED DECK LEN {:?}", deck.len());
         for id in storage.participants.keys() {
             if pos + 2 > deck.len() {
-                panic("Not enough cards in the deck");
+                panic("Not enough cards");
             }
 
             let card1 = deck[pos].clone();
@@ -608,6 +610,9 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
 
+        if !check_decrypted_points(&proofs, &storage.encrypted_cards, cards_by_player.clone()) {
+            panic!("Error in dec points");
+        }
         verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
 
         for (player, cards) in cards_by_player {
@@ -635,7 +640,7 @@ impl PokerService {
                 Stage::WaitingTableCardsAfterPreFlop => (0, 3, Stage::Flop),
                 Stage::WaitingTableCardsAfterFlop => (3, 1, Stage::Turn),
                 Stage::WaitingTableCardsAfterTurn => (4, 1, Stage::River),
-                _ => panic("Not in a card decryption waiting stage"),
+                _ => panic("Wrong stage"),
             },
             _ => panic("Wrong status"),
         };
@@ -645,7 +650,7 @@ impl PokerService {
         }
 
         if decryptions.len() != expected_count {
-            panic!("Invalid decryption count");
+            panic!("Wrong count");
         }
 
         for (card, decryption) in decryptions {
@@ -716,12 +721,10 @@ impl PokerService {
     ///
     /// Emits TurnIsMade and NextStage events
     pub fn turn(&mut self, action: Action) {
-        debug!("TURN");
         let player = msg::source();
         let storage = self.get_mut();
 
         let Status::Play { stage } = &mut storage.status else {
-            debug!("Wrong status");
             panic("Wrong status");
         };
 
@@ -729,25 +732,22 @@ impl PokerService {
             || *stage == Stage::WaitingTableCardsAfterFlop
             || *stage == Stage::WaitingTableCardsAfterTurn
         {
-            panic("Stage is waiting table cards to be decrypted");
+            panic("Wrong stage");
         }
 
-        let betting = storage.betting.as_mut().expect("Betting must exist");
+        let betting = storage.betting.as_mut().expect("No betting");
 
         let last_active_time = betting
             .last_active_time
-            .expect("Last active time must be exist");
+            .expect("No last active time");
         let current_time = exec::block_timestamp();
         let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
-        debug!("number_of_passes: {:?}", number_of_passes);
         if number_of_passes != 0 {
             let current_turn_player_id = storage
                 .active_participants
                 .skip_and_remove(number_of_passes);
 
             if let Some(current_turn_player_id) = current_turn_player_id {
-                debug!("current_turn_player_id: {:?}", current_turn_player_id);
-                debug!("player: {:?}", player);
                 if current_turn_player_id != player {
                     panic!("Not your turn!");
                 }
@@ -776,7 +776,6 @@ impl PokerService {
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
-                debug!("CALL {:?}", already_invested);
                 let call_value = betting.current_bet - already_invested;
                 if call_value == 0 || participant.balance <= call_value {
                     panic("Wrong action");
@@ -795,7 +794,6 @@ impl PokerService {
                     .or_insert(call_value);
             }
             Action::Check => {
-                debug!("HERE {:?}", betting.current_bet);
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
@@ -893,7 +891,6 @@ impl PokerService {
         }
         // Check if the round is complete before River stage
         else if betting.acted_players.len() == storage.active_participants.len() {
-            debug!("NEW CIRCLE");
             // if there's only one active player left, there's no point in betting any more
             if storage.active_participants.len() == 1 {
                 storage.status = Status::WaitingForCardsToBeDisclosed;
@@ -903,24 +900,21 @@ impl PokerService {
                 betting.turn = storage.active_participants.next().unwrap();
                 betting.last_active_time = None;
                 betting.acted_players.clear();
-                debug!("TURN {:?}", betting.turn);
                 betting.current_bet = 0;
 
                 *stage = stage.clone().next().unwrap();
                 self.emit_event(Event::NextStage(stage.clone()))
-                    .expect("Event Invocation Error");
+                    .expect("Event Error");
             }
         } else {
-            debug!("BEFORE TURN {:?}", betting.turn);
             betting.turn = storage
                 .active_participants
                 .next()
                 .expect("The player must exist");
-            debug!("AFTER TURN {:?}", betting.turn);
             betting.last_active_time = Some(current_time);
         }
         self.emit_event(Event::TurnIsMade { action })
-            .expect("Event Invocation Error");
+            .expect("Event Error");
     }
 
     fn deal_table_cards(&mut self, count: usize) {
@@ -928,10 +922,10 @@ impl PokerService {
         let deck = storage
             .encrypted_deck
             .as_ref()
-            .expect("Shuffled deck is not initialized");
+            .expect("No shuffled deck");
 
         if storage.deck_position + count > deck.len() {
-            panic("Not enough cards in the deck");
+            panic("Not enough cards");
         }
 
         let mut new_cards = Vec::new();
@@ -943,7 +937,7 @@ impl PokerService {
         }
 
         self.emit_event(Event::CardsDealtToTable(new_cards))
-            .expect("Event Invocation Error");
+            .expect("Event Error");
     }
 
     pub fn card_disclosure(&mut self, id_to_cards: Vec<(ActorId, (Card, Card))>) {
@@ -967,7 +961,7 @@ impl PokerService {
 
         let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
             Ok(array) => array,
-            Err(_) => unreachable!("Checked length above, should not fail"),
+            Err(_) => unreachable!(),
         };
 
         let hands = id_to_cards.into_iter().collect();
@@ -986,35 +980,7 @@ impl PokerService {
             winners,
             cash_prize,
         })
-        .expect("Event Invocation Error");
-    }
-
-    pub async fn submit_revealed_table_cards(
-        &mut self,
-        new_cards: Vec<Card>,
-        proofs: Vec<VerificationVariables>,
-    ) {
-        let storage = self.get_mut();
-
-        let already_revealed = storage.revealed_table_cards.len();
-        let expected_stage_count = match already_revealed {
-            0 => 3, // Flop
-            3 => 1, // Turn
-            4 => 1, // River
-            _ => panic("All table cards already revealed"),
-        };
-
-        if new_cards.len() != expected_stage_count {
-            panic("Incorrect number of cards for current stage");
-        }
-
-        if storage.table_cards.len() != 5 {
-            panic("Encrypted table cards not set");
-        }
-
-        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
-
-        storage.revealed_table_cards.extend(new_cards.clone());
+        .expect("Event Error");
     }
 
     // Query
