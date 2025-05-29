@@ -1,7 +1,7 @@
 use crate::services::EdwardsProjective;
 use crate::services::{
     EncryptedCard, PublicKey,
-    curve::{compare_points, compare_public_keys, compare_projective_and_coords},
+    curve::{compare_points, compare_projective_and_coords, compare_public_keys},
 };
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ff::{One, PrimeField};
@@ -202,7 +202,7 @@ async fn prepare_inputs(
     builtin_bls381_address: ActorId,
 ) -> G1Affine {
     if (public_inputs.len() + 1) != gamma_abc_g1.len() {
-        panic!("Wrong public inputs or IC length");
+        panic!("Wrong public inputs");
     }
     let mut g_ic = gamma_abc_g1[0].into_group();
 
@@ -229,21 +229,23 @@ pub fn validate_shuffle_chain(
 ) {
     let (original_first, permuted_first, pk_first) =
         parse_original_and_permuted(&instances[0].public_input);
-    assert!(
-        compare_public_keys(expected_pub_key, &pk_first),
-        "Wrong aggregated public key in the first shuffle"
-    );
+    if !compare_public_keys(expected_pub_key, &pk_first) {
+        panic!("Wrong agg_key");
+    }
     assert_initial_deck_matches(&original_deck, &original_first);
 
     let mut current = permuted_first;
 
-    for instance in &instances[1..instances.len() - 1] {
+    for instance in &instances[1..instances.len()] {
         let (original, permuted, pk) = parse_original_and_permuted(&instance.public_input);
-        assert!(
-            compare_public_keys(expected_pub_key, &pk),
-            "Wrong aggregated public key in intermediate shuffle"
-        );
-        assert_eq!(original, current, "Mismatch in intermediate shuffle chain");
+
+        if !compare_public_keys(expected_pub_key, &pk) {
+            panic!("Wrong agg_key");
+        }
+
+        if original != current {
+            panic!("Mismatch in shuffle chain")
+        }
         current = permuted;
     }
 
@@ -288,7 +290,7 @@ pub fn parse_original_and_permuted(
     let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
 
     if is_valid != Fq::one() {
-        panic!("Invalid proof: is_valid != 1");
+        panic!("Invalid proof");
     }
 
     // pk[3]
@@ -306,8 +308,6 @@ pub fn parse_original_and_permuted(
             .try_into()
             .expect("expected 32 bytes for z"),
     };
-
-    sails_rs::gstd::debug!("PK {:?}", pk);
 
     // Parsing `original`
     let original = (0..num_cards)

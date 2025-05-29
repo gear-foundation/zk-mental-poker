@@ -10,7 +10,8 @@ pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjecti
     let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
 
-    EdwardsProjective::new(x, y, t, z)
+    EdwardsProjective::new_unchecked(x, y, t, z).into_affine().into()
+
 }
 
 fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
@@ -278,7 +279,6 @@ mod tests {
         let decrypted_point = decrypt_point(&card_map, &encrypted_card, partial_decryptions)
             .expect("Point is not found");
         assert_eq!(decrypted_point, *card);
-        println!("decrypted_point {:?}", decrypted_point);
     }
 
     #[test]
@@ -338,6 +338,7 @@ pub fn check_decrypted_points(
     cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
 ) -> bool {
     let grouped = group_partial_decryptions_by_c0(proofs);
+
     let mut results = HashMap::new();
 
     for (c0_coords, partials) in grouped {
@@ -346,29 +347,26 @@ pub fn check_decrypted_points(
             .flat_map(|(_, cards)| cards)
             .find(|c| compare_points(&c.c0, &c0_coords))
             .map(|c| &c.c1);
-        sails_rs::gstd::debug!("HERE1");
         let Some(c1_coords) = c1_coords else {
             return false;
         };
-        sails_rs::gstd::debug!("HERE2");
         let decryption_sum = sum_partial_decryptions(&partials);
-        let decrypted = deserialize_bandersnatch_coords(c1_coords) - decryption_sum;
-        sails_rs::gstd::debug!("HERE3");
+        let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
+
         results.insert(c0_coords, decrypted);
     }
 
     for (c0_coords, decrypted_point) in results {
-        sails_rs::gstd::debug!("HERE4");
-        let Some(expected_point) = cards_by_player
+        let Some(expected_point_coords) = cards_by_player
             .iter()
             .flat_map(|(_, cards)| cards)
             .find(|c| compare_points(&c.c0, &c0_coords))
-            .map(|c| deserialize_bandersnatch_coords(&c.c1))
+            .map(|c| &c.c1)
         else {
             return false;
         };
-        sails_rs::gstd::debug!("HERE5");
-        if expected_point != decrypted_point {
+
+        if !compare_projective_and_coords(&decrypted_point, &expected_point_coords) {
             return false;
         }
     }
@@ -390,21 +388,20 @@ fn group_partial_decryptions_by_c0(
 }
 
 fn parse_partial_decryption_inputs(public_input: &[Vec<u8>]) -> ([Vec<u8>; 3], [Vec<u8>; 3]) {
-    assert_eq!(public_input.len(), 7, "Expected 7 public inputs");
     let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
 
     if is_valid != Fq::one() {
         panic!("Invalid proof");
     }
     let c0 = [
-        public_input[0].clone(),
         public_input[1].clone(),
         public_input[2].clone(),
+        public_input[3].clone(),
     ];
     let expected = [
-        public_input[3].clone(),
         public_input[4].clone(),
         public_input[5].clone(),
+        public_input[6].clone(),
     ];
     (c0, expected)
 }
@@ -413,7 +410,11 @@ fn sum_partial_decryptions(partials: &[[Vec<u8>; 3]]) -> EdwardsProjective {
     partials
         .iter()
         .fold(EdwardsProjective::zero(), |acc, coord| {
+            sails_rs::gstd::debug!("GAS 1 {:?}", sails_rs::gstd::exec::gas_available());
             let p = deserialize_bandersnatch_coords(coord);
-            acc + p
+            sails_rs::gstd::debug!("GAS 2 {:?}", sails_rs::gstd::exec::gas_available());
+            let sum = acc + p;
+            sails_rs::gstd::debug!("GAS 3 {:?}", sails_rs::gstd::exec::gas_available());
+            sum
         })
 }

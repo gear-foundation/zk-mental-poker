@@ -478,7 +478,6 @@ impl PokerService {
         .await;
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
-        sails_rs::gstd::debug!("GAS AFTER ZK {:?}", sails_rs::gstd::exec::gas_available());
     }
 
     /// Admin-only function to start the poker game after setup.
@@ -574,10 +573,7 @@ impl PokerService {
 
     fn deal_player_cards(&mut self) {
         let storage = self.get_mut();
-        let deck = storage
-            .encrypted_deck
-            .as_ref()
-            .expect("No encrypted deck");
+        let deck = storage.encrypted_deck.as_ref().expect("No encrypted deck");
         let mut pos = storage.deck_position;
 
         let mut dealt = Vec::new();
@@ -613,8 +609,10 @@ impl PokerService {
         if !check_decrypted_points(&proofs, &storage.encrypted_cards, cards_by_player.clone()) {
             panic!("Error in dec points");
         }
-        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
 
+        sails_rs::gstd::debug!("GAS AFTER {:?}", sails_rs::gstd::exec::gas_available());
+
+        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
         }
@@ -646,7 +644,7 @@ impl PokerService {
         };
 
         if !storage.participants.contains_key(&sender) {
-            panic!("Only participants can submit decryptions");
+            panic!("Not participant");
         }
 
         if decryptions.len() != expected_count {
@@ -737,9 +735,7 @@ impl PokerService {
 
         let betting = storage.betting.as_mut().expect("No betting");
 
-        let last_active_time = betting
-            .last_active_time
-            .expect("No last active time");
+        let last_active_time = betting.last_active_time.expect("No last active time");
         let current_time = exec::block_timestamp();
         let number_of_passes = (current_time - last_active_time) / TIME_FOR_MOVE;
         if number_of_passes != 0 {
@@ -919,10 +915,7 @@ impl PokerService {
 
     fn deal_table_cards(&mut self, count: usize) {
         let storage = self.get_mut();
-        let deck = storage
-            .encrypted_deck
-            .as_ref()
-            .expect("No shuffled deck");
+        let deck = storage.encrypted_deck.as_ref().expect("No shuffled deck");
 
         if storage.deck_position + count > deck.len() {
             panic("Not enough cards");
