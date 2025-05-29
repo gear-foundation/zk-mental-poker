@@ -38,6 +38,7 @@ pub struct LobbyConfig {
     big_blind: u128,
     number_of_participants: u16,
     starting_bank: u128,
+    time_per_move_ms: u64,
 }
 
 static mut STORAGE: Option<Storage> = None;
@@ -106,6 +107,10 @@ impl PokerFactoryService {
     pub async fn create_lobby(&mut self, init_lobby: LobbyConfig, pk: PublicKey) {
         let storage = self.get_mut();
         let msg_src = msg::source();
+
+        if init_lobby.time_per_move_ms < 15_000 {
+            panic!("Timer less than 15s");
+        }
 
         let request = pts_io::GetBalance::encode_call(msg_src);
 
