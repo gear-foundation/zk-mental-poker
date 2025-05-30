@@ -10,8 +10,9 @@ pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjecti
     let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
 
-    EdwardsProjective::new_unchecked(x, y, t, z).into_affine().into()
-
+    EdwardsProjective::new_unchecked(x, y, t, z)
+        .into_affine()
+        .into()
 }
 
 fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {

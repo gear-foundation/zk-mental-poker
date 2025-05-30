@@ -364,7 +364,7 @@ pub fn load_encrypted_table_cards(path: &str) -> Vec<EncryptedCard> {
 fn from_decimal_string(s: &str) -> Vec<u8> {
     let n = BigUint::from_str_radix(s, 10).expect("invalid number");
     let mut b = n.to_bytes_le();
-    b.resize(32, 0); 
+    b.resize(32, 0);
     b
 }
 

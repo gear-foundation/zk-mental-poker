@@ -1,6 +1,6 @@
 #![allow(static_mut_refs)]
 use sails_rs::collections::HashMap;
-use sails_rs::gstd::{debug, exec, msg};
+use sails_rs::gstd::{exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
@@ -12,8 +12,7 @@ use crate::services::curve::{
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
-    VerificationVariables, VerifyingKey, VerifyingKeyBytes, decode_verifying_key,
-    validate_shuffle_chain, verify_batch,
+    VerificationVariables, VerifyingKeyBytes, BatchVerificationContext, ShuffleChainValidator
 };
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
@@ -27,10 +26,9 @@ const ACTOR_ID: [u8; 32] =
     hex_literal::hex!("6b6e292c382945e80bf51af2ba7fe9f458dcff81ae6075c46f9095e1bbecdc37");
 #[derive(Debug)]
 struct Storage {
-    builtin_bls381_address: ActorId,
     // for zk
-    vk_shuffle: VerifyingKey,
-    vk_decrypt: VerifyingKey,
+    shuffle_verification_context: BatchVerificationContext,
+    decrypt_verificaiton_context: BatchVerificationContext,
     encrypted_deck: Option<Vec<EncryptedCard>>,
     encrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
     partially_decrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
@@ -168,7 +166,6 @@ impl PokerService {
         vk_shuffle_bytes: VerifyingKeyBytes,
         vk_decrypt_bytes: VerifyingKeyBytes,
     ) -> Self {
-        sails_rs::gstd::debug!("POKER");
         let mut participants = HashMap::new();
         participants.insert(
             config.admin_id,
@@ -182,12 +179,10 @@ impl PokerService {
         );
         let mut active_participants = TurnManager::new();
         active_participants.add(config.admin_id);
-        let vk_shuffle = decode_verifying_key(&vk_shuffle_bytes);
-        let vk_decrypt = decode_verifying_key(&vk_decrypt_bytes);
+
         let (original_deck, original_card_map) = init_deck_and_card_map();
         unsafe {
             STORAGE = Some(Storage {
-                builtin_bls381_address: ActorId::from(ACTOR_ID),
                 config,
                 status: Status::Registration,
                 participants,
@@ -197,8 +192,8 @@ impl PokerService {
                 betting_bank: HashMap::new(),
                 all_in_players: Vec::new(),
                 already_invested_in_the_circle: HashMap::new(),
-                vk_decrypt,
-                vk_shuffle,
+                decrypt_verificaiton_context: BatchVerificationContext::new(&vk_decrypt_bytes, ActorId::from(ACTOR_ID)),
+                shuffle_verification_context: BatchVerificationContext::new(&vk_shuffle_bytes, ActorId::from(ACTOR_ID)),
                 encrypted_deck: None,
                 deck_position: 0,
                 encrypted_cards: HashMap::new(),
@@ -463,19 +458,15 @@ impl PokerService {
             panic("Wrong status");
         }
 
-        validate_shuffle_chain(
+        ShuffleChainValidator::validate_shuffle_chain(
             &instances,
             &storage.original_deck,
             &storage.agg_pub_key,
             &encrypted_deck,
         );
 
-        verify_batch(
-            &storage.vk_shuffle,
-            instances,
-            storage.builtin_bls381_address,
-        )
-        .await;
+        storage.shuffle_verification_context.verify_batch(instances).await;
+
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
     }
@@ -602,17 +593,18 @@ impl PokerService {
     pub async fn submit_all_partial_decryptions(
         &mut self,
         cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
-        proofs: Vec<VerificationVariables>,
+        instances: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
 
-        if !check_decrypted_points(&proofs, &storage.encrypted_cards, cards_by_player.clone()) {
+        if !check_decrypted_points(&instances, &storage.encrypted_cards, cards_by_player.clone()) {
             panic!("Error in dec points");
         }
 
         sails_rs::gstd::debug!("GAS AFTER {:?}", sails_rs::gstd::exec::gas_available());
 
-        verify_batch(&storage.vk_decrypt, proofs, storage.builtin_bls381_address).await;
+        storage.decrypt_verificaiton_context.verify_batch(instances).await;
+
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
         }
