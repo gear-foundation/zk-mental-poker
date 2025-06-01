@@ -1,5 +1,5 @@
 #![allow(static_mut_refs)]
-use sails_rs::collections::HashMap;
+use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::{exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
@@ -8,11 +8,12 @@ mod utils;
 mod verify;
 use crate::services::curve::{
     calculate_agg_pub_key, check_decrypted_points, decrypt_point, init_deck_and_card_map,
+    verify_cards,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
 pub use verify::{
-    VerificationVariables, VerifyingKeyBytes, BatchVerificationContext, ShuffleChainValidator
+    BatchVerificationContext, ShuffleChainValidator, VerificationVariables, VerifyingKeyBytes,
 };
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
@@ -43,6 +44,7 @@ struct Storage {
     // active_participants - players who can place bets
     // not to be confused with those who are in the game, as there are also all in players.
     active_participants: TurnManager<ActorId>,
+    revealed_players: HashMap<ActorId, (Card, Card)>,
     status: Status,
     config: Config,
     round: u32,
@@ -192,8 +194,14 @@ impl PokerService {
                 betting_bank: HashMap::new(),
                 all_in_players: Vec::new(),
                 already_invested_in_the_circle: HashMap::new(),
-                decrypt_verificaiton_context: BatchVerificationContext::new(&vk_decrypt_bytes, ActorId::from(ACTOR_ID)),
-                shuffle_verification_context: BatchVerificationContext::new(&vk_shuffle_bytes, ActorId::from(ACTOR_ID)),
+                decrypt_verificaiton_context: BatchVerificationContext::new(
+                    &vk_decrypt_bytes,
+                    ActorId::from(ACTOR_ID),
+                ),
+                shuffle_verification_context: BatchVerificationContext::new(
+                    &vk_shuffle_bytes,
+                    ActorId::from(ACTOR_ID),
+                ),
                 encrypted_deck: None,
                 deck_position: 0,
                 encrypted_cards: HashMap::new(),
@@ -206,6 +214,7 @@ impl PokerService {
                 pts_actor_id,
                 factory_actor_id: msg::source(),
                 agg_pub_key: pk,
+                revealed_players: HashMap::new(),
             });
         }
         Self(())
@@ -465,7 +474,10 @@ impl PokerService {
             &encrypted_deck,
         );
 
-        storage.shuffle_verification_context.verify_batch(instances).await;
+        storage
+            .shuffle_verification_context
+            .verify_batch(instances)
+            .await;
 
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
@@ -597,13 +609,18 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
 
-        if !check_decrypted_points(&instances, &storage.encrypted_cards, cards_by_player.clone()) {
+        if !check_decrypted_points(
+            &instances,
+            &storage.encrypted_cards,
+            cards_by_player.clone(),
+        ) {
             panic!("Error in dec points");
         }
 
-        sails_rs::gstd::debug!("GAS AFTER {:?}", sails_rs::gstd::exec::gas_available());
-
-        storage.decrypt_verificaiton_context.verify_batch(instances).await;
+        storage
+            .decrypt_verificaiton_context
+            .verify_batch(instances)
+            .await;
 
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
@@ -620,7 +637,7 @@ impl PokerService {
     pub async fn submit_table_partial_decryptions(
         &mut self,
         decryptions: Vec<(EncryptedCard, [Vec<u8>; 3])>,
-        proofs: Vec<VerificationVariables>,
+        instances: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
         let sender = msg::source();
@@ -634,6 +651,11 @@ impl PokerService {
             },
             _ => panic("Wrong status"),
         };
+
+        storage
+            .decrypt_verificaiton_context
+            .verify_batch(instances)
+            .await;
 
         if !storage.participants.contains_key(&sender) {
             panic!("Not participant");
@@ -685,8 +707,6 @@ impl PokerService {
             }
 
             storage.revealed_table_cards.extend(revealed_cards);
-
-            storage.partially_decrypted_cards.clear();
 
             storage.status = Status::Play { stage: next_stage };
 
@@ -875,7 +895,6 @@ impl PokerService {
         else if betting.acted_players.len() == storage.active_participants.len()
             && *stage == Stage::River
         {
-            // переводим в статус ожидания карт игроков и стола
             storage.status = Status::WaitingForCardsToBeDisclosed;
         }
         // Check if the round is complete before River stage
@@ -926,47 +945,65 @@ impl PokerService {
             .expect("Event Error");
     }
 
-    pub fn card_disclosure(&mut self, id_to_cards: Vec<(ActorId, (Card, Card))>) {
+    pub async fn card_disclosure(&mut self, instances: Vec<(Card, VerificationVariables)>) {
         let storage = self.get_mut();
-        let mut expected_players: Vec<ActorId> = storage
+        let player = msg::source();
+        let partially_decrypted_cards = storage
+            .partially_decrypted_cards
+            .get(&player)
+            .expect("Not in game");
+
+        verify_cards(
+            &partially_decrypted_cards,
+            instances.clone(),
+            &storage.original_card_map,
+        );
+
+        let only_proofs = vec![instances[0].1.clone(), instances[1].1.clone()];
+
+        storage
+            .decrypt_verificaiton_context
+            .verify_batch(only_proofs)
+            .await;
+        let cards = (instances[0].0.clone(), instances[1].0.clone());
+        storage.revealed_players.insert(player, cards);
+
+        let expected_players: HashSet<ActorId> = storage
             .active_participants
             .all()
             .iter()
             .chain(storage.all_in_players.iter())
             .cloned()
             .collect();
+        let players: HashSet<ActorId> = storage.revealed_players.keys().cloned().collect();
 
-        let mut revealed_players: Vec<ActorId> = id_to_cards.iter().map(|(id, _)| *id).collect();
+        if players.is_superset(&expected_players) {
+            let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
+                Ok(array) => array,
+                Err(_) => unreachable!(),
+            };
 
-        expected_players.sort();
-        revealed_players.sort();
+            let (winners, cash_prize) = evaluate_round(
+                storage.revealed_players.clone(),
+                table_cards,
+                &storage.betting_bank,
+            );
 
-        if expected_players != revealed_players {
-            panic("Wrong players");
+            for (winner, prize) in winners.iter().zip(cash_prize.clone()) {
+                let participant = storage.participants.get_mut(winner).unwrap();
+                participant.balance = prize;
+            }
+
+            storage.status = Status::Finished {
+                winners: winners.clone(),
+                cash_prize: cash_prize.clone(),
+            };
+            self.emit_event(Event::Finished {
+                winners,
+                cash_prize,
+            })
+            .expect("Event Error");
         }
-
-        let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
-            Ok(array) => array,
-            Err(_) => unreachable!(),
-        };
-
-        let hands = id_to_cards.into_iter().collect();
-        let (winners, cash_prize) = evaluate_round(hands, table_cards, &storage.betting_bank);
-
-        for (winner, prize) in winners.iter().zip(cash_prize.clone()) {
-            let participant = storage.participants.get_mut(winner).unwrap();
-            participant.balance = prize;
-        }
-
-        storage.status = Status::Finished {
-            winners: winners.clone(),
-            cash_prize: cash_prize.clone(),
-        };
-        self.emit_event(Event::Finished {
-            winners,
-            cash_prize,
-        })
-        .expect("Event Error");
     }
 
     // Query

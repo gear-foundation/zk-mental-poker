@@ -159,6 +159,34 @@ pub fn decrypt_point(
     find_card_by_point(card_map, &decrypted_point)
 }
 
+pub fn verify_cards(
+    partially_decrypted: &[EncryptedCard; 2],
+    instances: Vec<(Card, VerificationVariables)>,
+    card_map: &HashMap<EdwardsProjective, Card>,
+) {
+    if instances.len() != 2 {
+        panic!("Expected 2 cards with proofs");
+    }
+
+    for (i, (declared_card, instance)) in instances.into_iter().enumerate() {
+        let (_, c1_part_coords) = parse_partial_decryption_inputs(&instance.public_input);
+
+        let encrypted = &partially_decrypted[i];
+        let c1_point = deserialize_bandersnatch_coords(&encrypted.c1);
+        let c1_part = deserialize_bandersnatch_coords(&c1_part_coords);
+
+        let decrypted_point = c1_point + c1_part;
+
+        let Some(expected_card) = find_card_by_point(card_map, &decrypted_point) else {
+            panic!("Decrypted point not found in card map");
+        };
+
+        if declared_card != expected_card {
+            panic!("Declared card does not match actual decrypted card");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,11 +439,8 @@ fn sum_partial_decryptions(partials: &[[Vec<u8>; 3]]) -> EdwardsProjective {
     partials
         .iter()
         .fold(EdwardsProjective::zero(), |acc, coord| {
-            sails_rs::gstd::debug!("GAS 1 {:?}", sails_rs::gstd::exec::gas_available());
             let p = deserialize_bandersnatch_coords(coord);
-            sails_rs::gstd::debug!("GAS 2 {:?}", sails_rs::gstd::exec::gas_available());
             let sum = acc + p;
-            sails_rs::gstd::debug!("GAS 3 {:?}", sails_rs::gstd::exec::gas_available());
             sum
         })
 }
