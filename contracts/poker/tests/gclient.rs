@@ -3,8 +3,13 @@ use std::{thread::sleep, time};
 use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
+use ark_ec::CurveGroup;
 mod utils_gclient;
-use crate::zk_loader::{get_vkey, load_player_public_keys, load_table_cards_proofs};
+use crate::zk_loader::{
+    get_vkey, DecryptedCardWithProof, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
+};
+use ark_ff::PrimeField;
+use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};
 use ark_serialize::CanonicalSerialize;
@@ -19,7 +24,9 @@ use std::fs;
 use std::io::BufWriter;
 use std::{fs::File, path::Path};
 use utils_gclient::*;
-
+use sails_rs::collections::HashMap;
+use poker_client::VerificationVariables;
+use poker_client::PublicKey;
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
@@ -154,6 +161,95 @@ pub struct Config {
     pub gas_for_reply_deposit: u64,
 }
 
+pub fn init_deck_and_card_map() -> (Vec<EdwardsProjective>, HashMap<EdwardsProjective, Card>) {
+    let mut encrypted_deck: Vec<EdwardsProjective> = Vec::with_capacity(52);
+
+    let num_cards = 52;
+    let base_affine = EdwardsAffine::generator();
+    let base_point: EdwardsProjective = base_affine.into();
+
+    for i in 1..=num_cards {
+        let scalar = Fr::from(i as u64);
+        let point = base_point * scalar;
+
+        encrypted_deck.push(point);
+    }
+
+    let card_map = build_card_map(encrypted_deck.clone());
+
+    (encrypted_deck, card_map)
+}
+
+pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective, Card> {
+    let mut card_map = HashMap::new();
+
+    let suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
+    let values = 2..=14;
+
+    let mut index = 0;
+    for suit in &suits {
+        for value in values.clone() {
+            card_map.insert(
+                deck[index],
+                Card {
+                    suit: suit.clone(),
+                    value,
+                },
+            );
+
+            index += 1;
+        }
+    }
+
+    card_map
+}
+
+pub fn find_card_by_point(
+    card_map: &HashMap<EdwardsProjective, Card>,
+    point: &EdwardsProjective,
+) -> Option<Card> {
+    card_map.iter().find_map(|(p, card)| {
+        if (point.x * p.z == p.x * point.z) && (point.y * p.z == p.y * point.z) {
+            Some(card.clone())
+        } else {
+            None
+        }
+    })
+}
+
+pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
+    let x = Fq::from_le_bytes_mod_order(&coords[0]);
+    let y = Fq::from_le_bytes_mod_order(&coords[1]);
+    let z = Fq::from_le_bytes_mod_order(&coords[2]);
+    let t = x * y;
+
+    EdwardsProjective::new_unchecked(x, y, t, z)
+        .into_affine()
+        .into()
+}
+
+pub fn build_player_card_disclosure(
+    data: Vec<(PublicKey, Vec<DecryptedCardWithProof>)>,
+    card_map: &HashMap<EdwardsProjective, Card>,
+) -> Vec<(PublicKey, Vec<(Card, VerificationVariables)>)> {
+    let mut result = Vec::new();
+
+    for (pk, decs) in data {
+        let mut verified = Vec::new();
+
+        for entry in decs {
+            let point = deserialize_bandersnatch_coords(&entry.decrypted);
+            let card = find_card_by_point(card_map, &point)
+                .expect("Card not found for decrypted point");
+
+            verified.push((card, entry.proof));
+        }
+
+        result.push((pk, verified));
+    }
+
+    result
+}
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {
     let api = GearApi::dev().await?;
@@ -332,57 +428,34 @@ async fn test_basic_function() -> Result<()> {
     println!("status: {:?}", status);
     assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
 
-    let cards_payload: Vec<(ActorId, (Card, Card))> = vec![
-        (
-            api_0.get_actor_id(),
-            (
-                Card {
-                    value: 14,
-                    suit: Suit::Hearts,
-                },
-                Card {
-                    value: 14,
-                    suit: Suit::Spades,
-                },
-            ),
-        ),
-        (
-            api_1.get_actor_id(),
-            (
-                Card {
-                    value: 13,
-                    suit: Suit::Hearts,
-                },
-                Card {
-                    value: 13,
-                    suit: Suit::Spades,
-                },
-            ),
-        ),
-        (
-            api_2.get_actor_id(),
-            (
-                Card {
-                    value: 10,
-                    suit: Suit::Hearts,
-                },
-                Card {
-                    value: 10,
-                    suit: Suit::Spades,
-                },
-            ),
-        ),
-    ];
+    println!("Players reveal their cards..");
 
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (cards_payload));
-    assert!(listener.message_processed(message_id).await?.succeed());
+    let player_cards = load_cards_with_proofs("tests/test_data/player_decryptions.json");
+
+    let (_, card_map) = init_deck_and_card_map();
+
+    let hands = build_player_card_disclosure(player_cards, &card_map);
+
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = hands
+            .iter()
+            .find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((pk, instances)) = entry {
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No cards found for public key: {:?}", pk);
+        }
+    }
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
     assert_eq!(
         status,
         Status::Finished {
-            winners: vec![api_0.get_actor_id()],
+            winners: vec![api_1.get_actor_id()],
             cash_prize: vec![330]
         }
     );

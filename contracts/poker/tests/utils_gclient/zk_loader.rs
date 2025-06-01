@@ -463,3 +463,67 @@ fn encode_inputs(inputs: &[Fr]) -> Vec<Vec<u8>> {
         })
         .collect()
 }
+#[derive(Deserialize)]
+pub struct JsonDecryptionEntry {
+    pub publicKey: ECPointJson,
+    pub cards: Vec<JsonCardProof>,
+}
+
+#[derive(Deserialize)]
+pub struct JsonCardProof {
+    pub decrypted: ECPointJson,
+    pub proof: ProofJson,
+    pub publicSignals: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecryptedCardWithProof {
+    pub decrypted: [Vec<u8>; 3],
+    pub proof: VerificationVariables,
+}
+
+pub fn load_cards_with_proofs(path: &str) -> Vec<(PublicKey, Vec<DecryptedCardWithProof>)> {
+    let raw = std::fs::read_to_string(path).expect("Failed to read JSON file");
+
+    let parsed: Vec<JsonDecryptionEntry> = serde_json::from_str(&raw).expect("Invalid JSON format");
+
+    let mut result = Vec::new();
+
+    for entry in parsed {
+        let player_key = PublicKey {
+            x: decimal_str_to_bytes_32(&entry.publicKey.x),
+            y: decimal_str_to_bytes_32(&entry.publicKey.y),
+            z: decimal_str_to_bytes_32(&entry.publicKey.z),
+        };
+
+        let mut cards = Vec::new();
+
+        for card in entry.cards {
+            let decrypted = [
+                from_decimal_string(&card.decrypted.x),
+                from_decimal_string(&card.decrypted.y),
+                from_decimal_string(&card.decrypted.z),
+            ];
+
+            let proof = Proof {
+                a: deserialize_g1(&card.proof.pi_a),
+                b: deserialize_g2(&card.proof.pi_b).expect("Invalid pi_b"),
+                c: deserialize_g1(&card.proof.pi_c),
+            };
+
+            let public_inputs = parse_public_signals(&card.publicSignals);
+
+            cards.push(DecryptedCardWithProof {
+                decrypted,
+                proof: VerificationVariables {
+                    proof_bytes: encode_proof(&proof),
+                    public_input: encode_inputs(&public_inputs),
+                },
+            });
+        }
+
+        result.push((player_key, cards));
+    }
+
+    result
+}
