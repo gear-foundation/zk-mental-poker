@@ -1,6 +1,6 @@
 use sails_rs::{
     calls::*,
-    gtest::{System, calls::*},
+    gtest::{calls::*, System},
 };
 
 use poker_factory_client::traits::*;

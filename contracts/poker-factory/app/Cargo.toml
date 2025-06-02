@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sails-rs = "0.8.0"
-gstd = { version = "1.8.0", features = ["debug"] }
+sails-rs.workspace = true
+gstd = { workspace = true, features = ["debug"] }
 poker-client = { path = "../../poker/client" }
 pts-client = { path = "../../pts/client"}

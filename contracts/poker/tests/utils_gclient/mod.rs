@@ -1,15 +1,15 @@
 use crate::{get_state, send_request};
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::{MessageId, ProgramId};
-use poker_client::{Card, Config, EncryptedCard, PublicKey, Status, Suit, traits::*};
+use poker_client::{traits::*, Card, Config, EncryptedCard, PublicKey, Status, Suit};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
 use ark_ff::{BigInt, PrimeField};
 use num_bigint::BigUint;
-use sails_rs::Decode;
 use sails_rs::collections::HashMap;
+use sails_rs::Decode;
 use zk_loader::{
     get_vkey, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
     load_player_public_keys, load_player_secret_keys, load_shuffle_proofs,
