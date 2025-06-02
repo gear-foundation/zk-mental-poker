@@ -43,13 +43,14 @@ pub struct LobbyConfig {
 
 static mut STORAGE: Option<Storage> = None;
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub enum Event {
     LobbyCreated {
         lobby_address: ActorId,
         admin: ActorId,
+        pk: PublicKey,
         lobby_config: LobbyConfig,
     },
     LobbyDeleted {
@@ -166,6 +167,7 @@ impl PokerFactoryService {
         self.emit_event(Event::LobbyCreated {
             lobby_address,
             admin: msg_src,
+            pk,
             lobby_config: init_lobby,
         })
         .expect("Notification Error");
