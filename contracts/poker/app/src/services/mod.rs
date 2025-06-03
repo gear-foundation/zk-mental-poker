@@ -768,10 +768,8 @@ impl PokerService {
                 storage.betting = None;
                 return;
             }
-        } else {
-            if betting.turn != player {
-                panic!("Not your turn!");
-            }
+        } else if betting.turn != player {
+            panic!("Not your turn!");
         }
 
         let participant = storage.participants.get_mut(&player).unwrap();

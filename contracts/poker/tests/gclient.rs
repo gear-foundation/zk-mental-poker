@@ -1,22 +1,26 @@
 use std::{thread::sleep, time};
 
+use ark_ec::CurveGroup;
 use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
-use ark_ec::CurveGroup;
 mod utils_gclient;
 use crate::zk_loader::{
-    get_vkey, DecryptedCardWithProof, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
+    get_vkey, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
+    DecryptedCardWithProof,
 };
-use ark_ff::PrimeField;
-use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ec::AffineRepr;
+use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};
+use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
+use poker_client::PublicKey;
+use poker_client::VerificationVariables;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
+use sails_rs::collections::HashMap;
 use sails_rs::TypeInfo;
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,9 +28,6 @@ use std::fs;
 use std::io::BufWriter;
 use std::{fs::File, path::Path};
 use utils_gclient::*;
-use sails_rs::collections::HashMap;
-use poker_client::VerificationVariables;
-use poker_client::PublicKey;
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
@@ -239,8 +240,8 @@ pub fn build_player_card_disclosure(
 
         for entry in decs {
             let point = deserialize_bandersnatch_coords(&entry.decrypted);
-            let card = find_card_by_point(card_map, &point)
-                .expect("Card not found for decrypted point");
+            let card =
+                find_card_by_point(card_map, &point).expect("Card not found for decrypted point");
 
             verified.push((card, entry.proof));
         }
@@ -437,9 +438,7 @@ async fn test_basic_function() -> Result<()> {
     let hands = build_player_card_disclosure(player_cards, &card_map);
 
     for (pk, _, _, name) in pk_to_actor_id.iter() {
-        let entry = hands
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
+        let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
 
         if let Some((pk, instances)) = entry {
             let api = api.clone().with(name).expect("Unable to change signer.");

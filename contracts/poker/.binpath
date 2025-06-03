@@ -1,1 +1,1 @@
-target/wasm32-gear/release/poker
+../target/wasm32-gear/debug/poker
