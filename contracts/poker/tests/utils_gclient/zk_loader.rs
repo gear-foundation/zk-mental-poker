@@ -111,7 +111,7 @@ pub fn load_player_secret_keys(path: &str) -> Vec<(usize, ark_ed_on_bls12_381_ba
         })
         .collect()
 }
-fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
+pub fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
     let n = BigUint::from_str_radix(s, 10).expect("invalid decimal");
     let b = n.to_bytes_be();
     if b.len() > 32 {

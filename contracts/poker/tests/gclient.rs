@@ -8,6 +8,7 @@ mod utils_gclient;
 use crate::zk_loader::{
     get_vkey, DecryptedCardWithProof, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
 };
+use crate::zk_loader::decimal_str_to_bytes_32;
 use ark_ff::PrimeField;
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ec::AffineRepr;
@@ -122,6 +123,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         big_blind: 10,
         number_of_participants: 3,
         starting_bank: 1000,
+        time_per_move_ms: 15_000,
     };
     let request = [
         "PokerFactory".encode(),
@@ -150,6 +152,7 @@ pub struct LobbyConfig {
     big_blind: u128,
     number_of_participants: u16,
     starting_bank: u128,
+    time_per_move_ms: u64,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -249,6 +252,73 @@ pub fn build_player_card_disclosure(
     }
 
     result
+}
+
+#[tokio::test]
+async fn test_create_lobby() -> Result<()> {
+    let pks = load_player_public_keys("tests/test_data/player_pks.json");
+
+    let bytes = hex_literal::hex!("4ef776e4066001d219068b0e4657b6bff311299aa48fb9144d6789ec0a625fa1");
+    let factory_id: ProgramId = bytes.into();
+
+    let api = GearApi::vara_testnet().await?;
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let config = LobbyConfig {
+        admin_id: api.get_actor_id(),
+        admin_name: "Name".to_string(),
+        lobby_name: "Lobby".to_string(),
+        small_blind: 5,
+        big_blind: 10,
+        number_of_participants: 2,
+        starting_bank: 1000,
+        time_per_move_ms: 15_000,
+    };
+
+    let request = [
+        "PokerFactory".encode(),
+        "CreateLobby".encode(),
+        (config.clone(), pks[0].1.clone()).encode(),
+    ]
+    .concat();
+    let gas = api
+        .calculate_handle_gas(None, factory_id, request, 0, true)
+        .await?;
+    println!("GAS {:?}", gas);
+    let message_id = send_request!(api: &api, program_id: factory_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    Ok(())
+}
+
+
+#[tokio::test]
+async fn test_register() -> Result<()> {
+    let pks = load_player_public_keys("tests/test_data/player_pks.json");
+
+    let bytes = hex_literal::hex!("93b20bab64f54116705a3b31d8e206bb43d1e13eb60aaf1d804a42b9414e2c3b");
+    let program_id: ProgramId = bytes.into();
+
+    let bytes = hex_literal::hex!("d5459f83a39b0a636664a311293bc336e2b3a1c32ecdeec732f061fb1af020f9");
+    let pts_id: ProgramId = bytes.into();
+
+    let api = GearApi::vara_testnet().await?;
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let mut player_name = "Bob".to_string();
+    let api = get_new_client(&api, USERS_STR[1]).await;
+
+
+    // let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+    // assert!(listener.message_processed(message_id).await?.succeed());
+
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    Ok(())
+
 }
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {

@@ -15,6 +15,14 @@ pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjecti
         .into()
 }
 
+pub fn serialize_bandersnatch_coords(point: &EdwardsProjective) -> [Vec<u8>; 3] {
+    [
+        point.x.into_bigint().to_bytes_le(),
+        point.y.into_bigint().to_bytes_le(),
+        point.z.into_bigint().to_bytes_le(),
+    ]
+}
+
 fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
     let x = Fq::from_le_bytes_mod_order(&pk.x);
     let y = Fq::from_le_bytes_mod_order(&pk.y);
@@ -361,14 +369,14 @@ mod tests {
     }
 }
 
-pub fn check_decrypted_points(
+pub fn get_decrypted_points(
     proofs: &[VerificationVariables],
     encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
-    cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
-) -> bool {
+) -> Vec<(ActorId, [EncryptedCard; 2])> {
     let grouped = group_partial_decryptions_by_c0(proofs);
 
     let mut results = HashMap::new();
+
 
     for (c0_coords, partials) in grouped {
         let c1_coords = encrypted_cards
@@ -377,7 +385,7 @@ pub fn check_decrypted_points(
             .find(|c| compare_points(&c.c0, &c0_coords))
             .map(|c| &c.c1);
         let Some(c1_coords) = c1_coords else {
-            return false;
+            panic!("Missing c1")
         };
         let decryption_sum = sum_partial_decryptions(&partials);
         let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
@@ -385,23 +393,75 @@ pub fn check_decrypted_points(
         results.insert(c0_coords, decrypted);
     }
 
-    for (c0_coords, decrypted_point) in results {
-        let Some(expected_point_coords) = cards_by_player
-            .iter()
-            .flat_map(|(_, cards)| cards)
-            .find(|c| compare_points(&c.c0, &c0_coords))
-            .map(|c| &c.c1)
-        else {
-            return false;
-        };
+    let mut cards_by_player = Vec::new();
 
-        if !compare_projective_and_coords(&decrypted_point, &expected_point_coords) {
-            return false;
+    let empty_card = EncryptedCard {
+        c0: [vec![], vec![], vec![]],
+        c1: [vec![], vec![], vec![]],
+    };
+    
+    for (actor_id, cards) in encrypted_cards {
+        let mut decrypted_cards = [empty_card.clone(), empty_card.clone()];
+
+        for (i, card) in cards.iter().enumerate() {
+            let decrypted_point = results.get(&card.c0);
+            let Some(decrypted_point) = decrypted_point else {
+                panic!("Missing decryption");
+            };
+
+            decrypted_cards[i] = EncryptedCard {
+                c0: card.c0.clone(),
+                c1: serialize_bandersnatch_coords(decrypted_point),
+            };
         }
+
+        cards_by_player.push((*actor_id, decrypted_cards));
     }
 
-    true
+    cards_by_player
 }
+
+// pub fn check_decrypted_points(
+//     proofs: &[VerificationVariables],
+//     encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
+//     cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
+// ) -> bool {
+//     let grouped = group_partial_decryptions_by_c0(proofs);
+
+//     let mut results = HashMap::new();
+
+//     for (c0_coords, partials) in grouped {
+//         let c1_coords = encrypted_cards
+//             .iter()
+//             .flat_map(|(_, cards)| cards)
+//             .find(|c| compare_points(&c.c0, &c0_coords))
+//             .map(|c| &c.c1);
+//         let Some(c1_coords) = c1_coords else {
+//             return false;
+//         };
+//         let decryption_sum = sum_partial_decryptions(&partials);
+//         let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
+
+//         results.insert(c0_coords, decrypted);
+//     }
+
+//     for (c0_coords, decrypted_point) in results {
+//         let Some(expected_point_coords) = cards_by_player
+//             .iter()
+//             .flat_map(|(_, cards)| cards)
+//             .find(|c| compare_points(&c.c0, &c0_coords))
+//             .map(|c| &c.c1)
+//         else {
+//             return false;
+//         };
+
+//         if !compare_projective_and_coords(&decrypted_point, &expected_point_coords) {
+//             return false;
+//         }
+//     }
+
+//     true
+// }
 
 fn group_partial_decryptions_by_c0(
     proofs: &[VerificationVariables],
