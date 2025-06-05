@@ -202,23 +202,9 @@ pub async fn make_zk_actions(
         .collect();
 
     println!("DECRYPT");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (cards_by_actor, decrypt_proofs));
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    // let card_map = init_deck_and_card_map();
-    // for (_, sk, id) in pk_to_actor_id.iter() {
-    //     let result = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "PlayerCards", return_type: Option<[EncryptedCard; 2]>, payload: (id));
-    //     let encrypted_cards = result.unwrap();
-
-    //     for card in encrypted_cards {
-    //         let c0_point = deserialize_bandersnatch_coords(&card.c0);
-    //         let c1_point = deserialize_bandersnatch_coords(&card.c1);
-
-    //         let sk_c0 = c0_point * sk;
-    //         let decrypted_point = c1_point - sk_c0;
-    //         println!("card {:?}", find_card_by_point(&card_map, &decrypted_point));
-    //     }
-    // }
     Ok((program_id, pk_to_actor_id))
 }
 

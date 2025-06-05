@@ -7,7 +7,7 @@ mod curve;
 mod utils;
 mod verify;
 use crate::services::curve::{
-    calculate_agg_pub_key, check_decrypted_points, decrypt_point, init_deck_and_card_map,
+    calculate_agg_pub_key, get_decrypted_points, decrypt_point, init_deck_and_card_map,
     verify_cards,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
@@ -604,18 +604,13 @@ impl PokerService {
 
     pub async fn submit_all_partial_decryptions(
         &mut self,
-        cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
         instances: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
 
-        if !check_decrypted_points(
+        let cards_by_player = get_decrypted_points(
             &instances,
-            &storage.encrypted_cards,
-            cards_by_player.clone(),
-        ) {
-            panic!("Error in dec points");
-        }
+            &storage.encrypted_cards);
 
         storage
             .decrypt_verificaiton_context
