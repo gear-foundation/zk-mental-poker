@@ -10,9 +10,6 @@ use crate::zk_loader::{
     DecryptedCardWithProof,
 };
 use crate::zk_loader::decimal_str_to_bytes_32;
-use ark_ff::PrimeField;
-use ark_ed_on_bls12_381_bandersnatch::Fq;
-
 use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};

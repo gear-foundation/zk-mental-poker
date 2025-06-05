@@ -45,3 +45,5 @@ contracts/pts/.binpath
 coverage*
 
 pot*
+
+target

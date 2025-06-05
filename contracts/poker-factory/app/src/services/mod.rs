@@ -43,13 +43,14 @@ pub struct LobbyConfig {
 
 static mut STORAGE: Option<Storage> = None;
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub enum Event {
     LobbyCreated {
         lobby_address: ActorId,
         admin: ActorId,
+        pk: PublicKey,
         lobby_config: LobbyConfig,
     },
     LobbyDeleted {
@@ -121,11 +122,9 @@ impl PokerFactoryService {
 
         let balance: u128 = pts_io::GetBalance::decode_reply(bytes_reply_balance).unwrap();
 
-        sails_rs::gstd::debug!("AFTER PTS REPLY");
         if balance < init_lobby.starting_bank {
             panic!("Low pts balance");
         }
-        sails_rs::gstd::debug!("BEFORE PAYLOAD");
         let payload = [
             "New".encode(),
             init_lobby.encode(),
@@ -166,6 +165,7 @@ impl PokerFactoryService {
         self.emit_event(Event::LobbyCreated {
             lobby_address,
             admin: msg_src,
+            pk,
             lobby_config: init_lobby,
         })
         .expect("Notification Error");
