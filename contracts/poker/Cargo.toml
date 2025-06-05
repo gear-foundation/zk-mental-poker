@@ -1,41 +1,37 @@
-[workspace]
-
-members = ["client"]
-
-
 [package]
 name = "poker"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [dependencies]
 poker-app = { path = "app" }
 
 [build-dependencies]
 poker-app = { path = "app" }
-sails-rs = { version = "0.8.0", features = ["wasm-builder"] }
-sails-idl-gen = "0.8.0"
+sails-rs = { workspace = true, features = ["wasm-builder"] }
+sails-idl-gen.workspace = true
 
 [dev-dependencies]
 poker = { path = ".", features = ["wasm-binary"] }
 poker-client = { path = "client" }
-sails-rs = { version = "0.8.0", features = ["gtest"] }
-tokio = { version = "1.41", features = ["rt", "macros"] }
-gclient = "=1.8.0"
-hex-literal = "0.4.1"
-gear-core = "=1.8.0"
-ark-bls12-381 = "0.5.0"
-ark-ec = "0.5.0"
-ark-ff = "0.5.0"
-ark-scale = "=0.0.12"
-serde = { version = "1.0.219", features = ["derive"] }
-ark-serialize = "0.5.0"
-hex = "0.4.3"
-serde_json = "1.0.140"
-num-bigint = "0.4.6"
-num-traits = "0.2.19"
-ark-ed-on-bls12-381-bandersnatch = { version = "0.5", default-features = false }
-bincode = "2.0.1"
+sails-rs = { workspace = true, features = ["gtest"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+gclient.workspace = true
+hex-literal.workspace = true
+gear-core.workspace = true
+ark-bls12-381.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
+ark-scale.workspace = true
+serde.workspace = true
+ark-serialize.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+ark-ed-on-bls12-381-bandersnatch = { workspace = true, default-features = false }
+bincode.workspace = true
 
 [features]
 wasm-binary = []

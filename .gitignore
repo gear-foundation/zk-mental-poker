@@ -24,8 +24,11 @@ witness_calculator.js
 *_constraints.json
 scripts/types/
 .DS_STORE
-contracts/poker-factory/target
-contracts/poker/target
+contracts/target
+contracts/poker/.binpath
+contracts/poker-factory/.binpath
+contracts/pts/.binpath
+
 # circuits
 *.vkey.json
 
