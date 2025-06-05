@@ -31,7 +31,7 @@ use std::{fs::File, path::Path};
 use utils_gclient::*;
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
-    let poker_code_path = "./target/wasm32-gear/release/poker.opt.wasm";
+    let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
     // let api = GearApi::dev().await?;
     let api = GearApi::vara_testnet().await?;
     let mut listener = api.subscribe().await?;
@@ -41,13 +41,13 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         code_id
     } else {
         let code =
-            fs::read("./target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
+            fs::read("../target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
         CodeId::generate(code.as_ref())
     };
     let pks = load_player_public_keys("tests/test_data/player_pks.json");
 
     // PTS
-    let path = "../pts/target/wasm32-gear/release/pts.opt.wasm";
+    let path = "../target/wasm32-gear/release/pts.opt.wasm";
     let accural: u128 = 10_000;
     let time_ms_between_balance_receipt: u64 = 10_000;
     let request = [
@@ -76,7 +76,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
 
     // Factory
 
-    let path = "../poker-factory/target/wasm32-gear/release/poker_factory.opt.wasm";
+    let path = "../target/wasm32-gear/release/poker_factory.opt.wasm";
     let config = Config {
         lobby_code_id: poker_code_id,
         gas_for_program: 680_000_000_000,
