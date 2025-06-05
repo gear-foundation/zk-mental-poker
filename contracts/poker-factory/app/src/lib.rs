@@ -3,7 +3,6 @@
 #![allow(static_mut_refs)]
 mod services;
 use crate::services::{Config, PokerFactoryService};
-use poker_client::{PublicKey, VerifyingKeyBytes};
 use sails_rs::{ActorId, Vec};
 pub struct PokerFactoryProgram(());
 
