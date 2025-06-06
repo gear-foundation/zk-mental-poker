@@ -137,6 +137,7 @@ pub enum Event {
     RegistrationCanceled {
         player_id: ActorId,
     },
+    DeckShuffleComplete,
     GameStarted,
     CardsDealtToPlayers(Vec<(ActorId, [EncryptedCard; 2])>),
     CardsDealtToTable(Vec<EncryptedCard>),
@@ -481,6 +482,9 @@ impl PokerService {
 
         storage.status = Status::WaitingStart;
         storage.encrypted_deck = Some(encrypted_deck);
+
+        self.emit_event(Event::DeckShuffleComplete)
+            .expect("Event Invocation Error");
     }
 
     /// Admin-only function to start the poker game after setup.
