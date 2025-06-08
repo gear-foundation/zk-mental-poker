@@ -5,11 +5,11 @@ use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
+use crate::zk_loader::decimal_str_to_bytes_32;
 use crate::zk_loader::{
     get_vkey, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
     DecryptedCardWithProof,
 };
-use crate::zk_loader::decimal_str_to_bytes_32;
 use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};
@@ -18,6 +18,8 @@ use ark_serialize::CanonicalSerialize;
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
+use num_bigint::BigUint;
+use poker_client::EncryptedCard;
 use poker_client::PublicKey;
 use poker_client::VerificationVariables;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
@@ -27,6 +29,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::io::BufWriter;
+use std::str::FromStr;
 use std::{fs::File, path::Path};
 use utils_gclient::*;
 #[tokio::test]
@@ -227,9 +230,7 @@ pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjecti
     let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
 
-    EdwardsProjective::new_unchecked(x, y, t, z)
-        .into_affine()
-        .into()
+    EdwardsProjective::new(x, y, t, z)
 }
 
 pub fn build_player_card_disclosure(
@@ -259,7 +260,8 @@ pub fn build_player_card_disclosure(
 async fn test_create_lobby() -> Result<()> {
     let pks = load_player_public_keys("tests/test_data/player_pks.json");
 
-    let bytes = hex_literal::hex!("4ef776e4066001d219068b0e4657b6bff311299aa48fb9144d6789ec0a625fa1");
+    let bytes =
+        hex_literal::hex!("4ef776e4066001d219068b0e4657b6bff311299aa48fb9144d6789ec0a625fa1");
     let factory_id: ProgramId = bytes.into();
 
     let api = GearApi::vara_testnet().await?;
@@ -293,15 +295,58 @@ async fn test_create_lobby() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_decrypt_cards() -> Result<()> {
+    let bytes =
+        hex_literal::hex!("2718a48b87f2ecb4d5990b4a5f37031c57a82fbdc393d452ac54ada497e64fa3");
+    let program_id: ProgramId = bytes.into();
+
+    let api = GearApi::vara_testnet().await?;
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let encrypted_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "EncryptedTableCards", return_type: Vec<EncryptedCard>, payload: ());
+    //println!("encrypted_cards: {:?}", encrypted_cards);
+
+    let (c0, c1) = (
+        deserialize_bandersnatch_coords(&encrypted_cards[0].c0),
+        deserialize_bandersnatch_coords(&encrypted_cards[0].c1),
+    );
+
+    let sk = "7234519715053167374";
+    let sk_biguint = BigUint::from_str(sk).expect("invalid bigint string");
+    let sk_bytes = sk_biguint.to_bytes_le();
+    let sk_fr_1 = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
+
+    let sk = "3117250224513928856";
+    let sk_biguint = BigUint::from_str(sk).expect("invalid bigint string");
+    let sk_bytes = sk_biguint.to_bytes_le();
+    let sk_fr_2 = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
+
+    let sk_c0_1 = -(c0 * sk_fr_1);
+    let sk_c0_2 = -(c0 * sk_fr_2);
+    let sum = sk_c0_1 + sk_c0_2;
+    let point = c1 + sum;
+
+    let (_, map) = init_deck_and_card_map();
+    let p = find_card_by_point(&map, &point);
+    println!("decrypted {:?}", p);
+
+    println!("sk_c0_1 {:?}", sk_c0_1.into_affine());
+    println!("sk_c0_2 {:?}", sk_c0_2.into_affine());
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_register() -> Result<()> {
     let pks = load_player_public_keys("tests/test_data/player_pks.json");
 
-    let bytes = hex_literal::hex!("93b20bab64f54116705a3b31d8e206bb43d1e13eb60aaf1d804a42b9414e2c3b");
+    let bytes =
+        hex_literal::hex!("93b20bab64f54116705a3b31d8e206bb43d1e13eb60aaf1d804a42b9414e2c3b");
     let program_id: ProgramId = bytes.into();
 
-    let bytes = hex_literal::hex!("d5459f83a39b0a636664a311293bc336e2b3a1c32ecdeec732f061fb1af020f9");
+    let bytes =
+        hex_literal::hex!("d5459f83a39b0a636664a311293bc336e2b3a1c32ecdeec732f061fb1af020f9");
     let pts_id: ProgramId = bytes.into();
 
     let api = GearApi::vara_testnet().await?;
@@ -311,7 +356,6 @@ async fn test_register() -> Result<()> {
     let mut player_name = "Bob".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
 
-
     // let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     // assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -319,7 +363,6 @@ async fn test_register() -> Result<()> {
     assert!(listener.message_processed(message_id).await?.succeed());
 
     Ok(())
-
 }
 #[tokio::test]
 async fn test_basic_function() -> Result<()> {
@@ -389,11 +432,10 @@ async fn test_basic_function() -> Result<()> {
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (decryptions, proofs))) = entry {
-            let decryptions: Vec<_> = decryptions[..3].to_vec();
+        if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[..3].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);
@@ -449,11 +491,10 @@ async fn test_basic_function() -> Result<()> {
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (decryptions, proofs))) = entry {
-            let decryptions: Vec<_> = decryptions[3..4].to_vec();
+        if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[3..4].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);
@@ -479,11 +520,10 @@ async fn test_basic_function() -> Result<()> {
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (decryptions, proofs))) = entry {
-            let decryptions: Vec<_> = decryptions[4..5].to_vec();
+        if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[4..5].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (decryptions, proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);

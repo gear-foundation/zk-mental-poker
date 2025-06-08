@@ -377,7 +377,6 @@ pub fn get_decrypted_points(
 
     let mut results = HashMap::new();
 
-
     for (c0_coords, partials) in grouped {
         let c1_coords = encrypted_cards
             .iter()
@@ -399,7 +398,7 @@ pub fn get_decrypted_points(
         c0: [vec![], vec![], vec![]],
         c1: [vec![], vec![], vec![]],
     };
-    
+
     for (actor_id, cards) in encrypted_cards {
         let mut decrypted_cards = [empty_card.clone(), empty_card.clone()];
 
@@ -421,48 +420,6 @@ pub fn get_decrypted_points(
     cards_by_player
 }
 
-// pub fn check_decrypted_points(
-//     proofs: &[VerificationVariables],
-//     encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
-//     cards_by_player: Vec<(ActorId, [EncryptedCard; 2])>,
-// ) -> bool {
-//     let grouped = group_partial_decryptions_by_c0(proofs);
-
-//     let mut results = HashMap::new();
-
-//     for (c0_coords, partials) in grouped {
-//         let c1_coords = encrypted_cards
-//             .iter()
-//             .flat_map(|(_, cards)| cards)
-//             .find(|c| compare_points(&c.c0, &c0_coords))
-//             .map(|c| &c.c1);
-//         let Some(c1_coords) = c1_coords else {
-//             return false;
-//         };
-//         let decryption_sum = sum_partial_decryptions(&partials);
-//         let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
-
-//         results.insert(c0_coords, decrypted);
-//     }
-
-//     for (c0_coords, decrypted_point) in results {
-//         let Some(expected_point_coords) = cards_by_player
-//             .iter()
-//             .flat_map(|(_, cards)| cards)
-//             .find(|c| compare_points(&c.c0, &c0_coords))
-//             .map(|c| &c.c1)
-//         else {
-//             return false;
-//         };
-
-//         if !compare_projective_and_coords(&decrypted_point, &expected_point_coords) {
-//             return false;
-//         }
-//     }
-
-//     true
-// }
-
 fn group_partial_decryptions_by_c0(
     proofs: &[VerificationVariables],
 ) -> HashMap<[Vec<u8>; 3], Vec<[Vec<u8>; 3]>> {
@@ -476,6 +433,25 @@ fn group_partial_decryptions_by_c0(
     map
 }
 
+pub fn get_cards_and_decryptions(
+    table_cards: &[EncryptedCard],
+    proofs: &[VerificationVariables],
+) -> Vec<(EncryptedCard, [Vec<u8>; 3])> {
+    let mut decryptions = Vec::new();
+    for proof in proofs {
+        let (c0, dec) = parse_partial_decryption_inputs(&proof.public_input);
+        let c1 = table_cards
+            .iter()
+            .find(|c| compare_points(&c.c0, &c0))
+            .map(|c| &c.c1);
+        let Some(c1) = c1 else {
+            panic!("Card not found")
+        };
+        let card = EncryptedCard { c0, c1: c1.clone() };
+        decryptions.push((card, dec));
+    }
+    decryptions
+}
 fn parse_partial_decryption_inputs(public_input: &[Vec<u8>]) -> ([Vec<u8>; 3], [Vec<u8>; 3]) {
     let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
 
