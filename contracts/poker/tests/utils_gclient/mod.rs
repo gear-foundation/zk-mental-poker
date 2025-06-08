@@ -104,7 +104,7 @@ pub async fn init(
     let constructor = (config, pts_id, pk, shuffle_vkey, decrypt_vkey);
     let request = ["New".encode(), constructor.encode()].concat();
 
-    let path = "./target/wasm32-gear/release/poker.opt.wasm";
+    let path = "../target/wasm32-gear/release/poker.opt.wasm";
 
     let (message_id, program_id, _hash) = api
         .upload_program_bytes(

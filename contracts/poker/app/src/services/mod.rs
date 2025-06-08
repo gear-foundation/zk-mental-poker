@@ -7,8 +7,8 @@ mod curve;
 mod utils;
 mod verify;
 use crate::services::curve::{
-    calculate_agg_pub_key, get_decrypted_points, decrypt_point, init_deck_and_card_map,
-    verify_cards,
+    calculate_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
+    init_deck_and_card_map, verify_cards,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
@@ -580,7 +580,6 @@ impl PokerService {
         let mut pos = storage.deck_position;
 
         let mut dealt = Vec::new();
-        sails_rs::gstd::debug!("DEAL ENCRYPTED DECK LEN {:?}", deck.len());
         for id in storage.participants.keys() {
             if pos + 2 > deck.len() {
                 panic("Not enough cards");
@@ -602,15 +601,10 @@ impl PokerService {
             .expect("Event Invocation Error");
     }
 
-    pub async fn submit_all_partial_decryptions(
-        &mut self,
-        instances: Vec<VerificationVariables>,
-    ) {
+    pub async fn submit_all_partial_decryptions(&mut self, instances: Vec<VerificationVariables>) {
         let storage = self.get_mut();
 
-        let cards_by_player = get_decrypted_points(
-            &instances,
-            &storage.encrypted_cards);
+        let cards_by_player = get_decrypted_points(&instances, &storage.encrypted_cards);
 
         storage
             .decrypt_verificaiton_context
@@ -631,7 +625,6 @@ impl PokerService {
 
     pub async fn submit_table_partial_decryptions(
         &mut self,
-        decryptions: Vec<(EncryptedCard, [Vec<u8>; 3])>,
         instances: Vec<VerificationVariables>,
     ) {
         let storage = self.get_mut();
@@ -647,6 +640,11 @@ impl PokerService {
             _ => panic("Wrong status"),
         };
 
+        if instances.len() != expected_count {
+            panic!("Wrong amount of proofs");
+        }
+        let decryptions = get_cards_and_decryptions(&storage.table_cards, &instances);
+
         storage
             .decrypt_verificaiton_context
             .verify_batch(instances)
@@ -660,8 +658,10 @@ impl PokerService {
             panic!("Wrong count");
         }
 
+        let expected_cards = &storage.table_cards[base_index..base_index + expected_count];
+
         for (card, decryption) in decryptions {
-            assert!(storage.table_cards.contains(&card), "Wrong card");
+            assert!(expected_cards.contains(&card), "Wrong card");
             storage
                 .partial_table_card_decryptions
                 .entry(card)

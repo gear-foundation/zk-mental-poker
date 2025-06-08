@@ -1,5 +1,5 @@
 use gstd::prog::ProgramGenerator;
-use poker_client::{PublicKey};
+use poker_client::PublicKey;
 use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
