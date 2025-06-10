@@ -692,7 +692,6 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
         let sender = msg::source();
-
         let (base_index, expected_count, next_stage) = match &storage.status {
             Status::Play { stage } => match stage {
                 Stage::WaitingTableCardsAfterPreFlop => (0, 3, Some(Stage::Flop)),
@@ -1031,6 +1030,7 @@ impl PokerService {
             .partially_decrypted_cards
             .get(&player)
             .expect("Not in game");
+        sails_rs::gstd::debug!("CARD DECRYPT {:?}", partially_decrypted_cards);
 
         verify_cards(
             partially_decrypted_cards,

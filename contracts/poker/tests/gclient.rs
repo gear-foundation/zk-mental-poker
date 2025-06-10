@@ -705,5 +705,36 @@ async fn test_all_in_case() -> Result<()> {
             panic!("No decryptions found for public key: {:?}", pk);
         }
     }
+
+     // get revealed cards
+     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+
+     println!(" revealed table_cards: {:?}", table_cards);
+
+     println!("Players reveal their cards..");
+
+     reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
+
+    Ok(())
+}
+
+async fn reveal_player_cards( program_id: ProgramId, api: &GearApi, listener: &mut EventListener, pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &'static str)>) -> Result<()> {
+    let player_cards = load_cards_with_proofs("tests/test_data/player_decryptions.json");
+
+    let (_, card_map) = init_deck_and_card_map();
+
+    let hands = build_player_card_disclosure(player_cards, &card_map);
+
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((pk, instances)) = entry {
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No cards found for public key: {:?}", pk);
+        }
+    }
     Ok(())
 }
