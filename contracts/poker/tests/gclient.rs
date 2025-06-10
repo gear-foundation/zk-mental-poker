@@ -257,115 +257,7 @@ pub fn build_player_card_disclosure(
 }
 
 #[tokio::test]
-async fn test_create_lobby() -> Result<()> {
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-
-    let bytes =
-        hex_literal::hex!("4ef776e4066001d219068b0e4657b6bff311299aa48fb9144d6789ec0a625fa1");
-    let factory_id: ProgramId = bytes.into();
-
-    let api = GearApi::vara_testnet().await?;
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let config = LobbyConfig {
-        admin_id: api.get_actor_id(),
-        admin_name: "Name".to_string(),
-        lobby_name: "Lobby".to_string(),
-        small_blind: 5,
-        big_blind: 10,
-        number_of_participants: 2,
-        starting_bank: 1000,
-        time_per_move_ms: 15_000,
-    };
-
-    let request = [
-        "PokerFactory".encode(),
-        "CreateLobby".encode(),
-        (config.clone(), pks[0].1.clone()).encode(),
-    ]
-    .concat();
-    let gas = api
-        .calculate_handle_gas(None, factory_id, request, 0, true)
-        .await?;
-    println!("GAS {:?}", gas);
-    let message_id = send_request!(api: &api, program_id: factory_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_decrypt_cards() -> Result<()> {
-    let bytes =
-        hex_literal::hex!("2718a48b87f2ecb4d5990b4a5f37031c57a82fbdc393d452ac54ada497e64fa3");
-    let program_id: ProgramId = bytes.into();
-
-    let api = GearApi::vara_testnet().await?;
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let encrypted_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "EncryptedTableCards", return_type: Vec<EncryptedCard>, payload: ());
-    //println!("encrypted_cards: {:?}", encrypted_cards);
-
-    let (c0, c1) = (
-        deserialize_bandersnatch_coords(&encrypted_cards[0].c0),
-        deserialize_bandersnatch_coords(&encrypted_cards[0].c1),
-    );
-
-    let sk = "7234519715053167374";
-    let sk_biguint = BigUint::from_str(sk).expect("invalid bigint string");
-    let sk_bytes = sk_biguint.to_bytes_le();
-    let sk_fr_1 = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
-
-    let sk = "3117250224513928856";
-    let sk_biguint = BigUint::from_str(sk).expect("invalid bigint string");
-    let sk_bytes = sk_biguint.to_bytes_le();
-    let sk_fr_2 = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
-
-    let sk_c0_1 = -(c0 * sk_fr_1);
-    let sk_c0_2 = -(c0 * sk_fr_2);
-    let sum = sk_c0_1 + sk_c0_2;
-    let point = c1 + sum;
-
-    let (_, map) = init_deck_and_card_map();
-    let p = find_card_by_point(&map, &point);
-    println!("decrypted {:?}", p);
-
-    println!("sk_c0_1 {:?}", sk_c0_1.into_affine());
-    println!("sk_c0_2 {:?}", sk_c0_2.into_affine());
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_register() -> Result<()> {
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-
-    let bytes =
-        hex_literal::hex!("93b20bab64f54116705a3b31d8e206bb43d1e13eb60aaf1d804a42b9414e2c3b");
-    let program_id: ProgramId = bytes.into();
-
-    let bytes =
-        hex_literal::hex!("d5459f83a39b0a636664a311293bc336e2b3a1c32ecdeec732f061fb1af020f9");
-    let pts_id: ProgramId = bytes.into();
-
-    let api = GearApi::vara_testnet().await?;
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let mut player_name = "Bob".to_string();
-    let api = get_new_client(&api, USERS_STR[1]).await;
-
-    // let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
-    // assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    Ok(())
-}
-#[tokio::test]
-async fn test_basic_function() -> Result<()> {
+async fn test_basic_workflow() -> Result<()> {
     let api = GearApi::dev().await?;
 
     let mut listener = api.subscribe().await?;
@@ -747,7 +639,6 @@ async fn test_delete_player() -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::test]
 async fn test_all_in_case() -> Result<()> {
     let api = GearApi::dev().await?;
@@ -798,5 +689,21 @@ async fn test_all_in_case() -> Result<()> {
     assert_eq!(participants[1].1.balance, 0);
     assert_eq!(participants[2].1.balance, 0);
 
+    let table_cards_proofs =
+        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = table_cards_proofs
+            .iter()
+            .find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((_, (_, proofs))) = entry {
+            let proofs: Vec<_> = proofs[..5].to_vec();
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No decryptions found for public key: {:?}", pk);
+        }
+    }
     Ok(())
 }

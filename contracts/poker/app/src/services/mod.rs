@@ -69,6 +69,7 @@ pub enum Status {
         stage: Stage,
     },
     WaitingForCardsToBeDisclosed,
+    WaitingForAllTableCardsToBeDisclosed,
     Finished {
         winners: Vec<ActorId>,
         cash_prize: Vec<u128>,
@@ -694,11 +695,19 @@ impl PokerService {
 
         let (base_index, expected_count, next_stage) = match &storage.status {
             Status::Play { stage } => match stage {
-                Stage::WaitingTableCardsAfterPreFlop => (0, 3, Stage::Flop),
-                Stage::WaitingTableCardsAfterFlop => (3, 1, Stage::Turn),
-                Stage::WaitingTableCardsAfterTurn => (4, 1, Stage::River),
+                Stage::WaitingTableCardsAfterPreFlop => (0, 3, Some(Stage::Flop)),
+                Stage::WaitingTableCardsAfterFlop => (3, 1, Some(Stage::Turn)),
+                Stage::WaitingTableCardsAfterTurn => (4, 1, Some(Stage::River)),
                 _ => panic("Wrong stage"),
             },
+            Status::WaitingForAllTableCardsToBeDisclosed => {
+                match storage.revealed_table_cards.len() {
+                    0 => (0, 5, None),
+                    3 => (3, 2, None),
+                    4 => (4, 1, None),
+                    _ => panic("Wrong amount of revealed cards"),
+                }               
+            }
             _ => panic("Wrong status"),
         };
 
@@ -765,7 +774,11 @@ impl PokerService {
 
             storage.revealed_table_cards.extend(revealed_cards);
 
-            storage.status = Status::Play { stage: next_stage };
+            if let Some(next_stage) = next_stage {
+                storage.status = Status::Play { stage: next_stage };
+            } else {
+                storage.status = Status::WaitingForCardsToBeDisclosed;
+            };
 
             if let Some(betting) = &mut storage.betting {
                 betting.last_active_time = Some(exec::block_timestamp());
@@ -964,7 +977,7 @@ impl PokerService {
             // if there's only one active player left, there's no point in betting any more
             // and if there's nobody active player left(everybody call AllIn), there's no point in betting any more
             if storage.active_participants.len() <= 1 {
-                storage.status = Status::WaitingForCardsToBeDisclosed;
+                storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
             } else {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
@@ -1010,6 +1023,9 @@ impl PokerService {
 
     pub async fn card_disclosure(&mut self, instances: Vec<(Card, VerificationVariables)>) {
         let storage = self.get_mut();
+        if storage.status != Status::WaitingForCardsToBeDisclosed {
+            panic!("Wrong status")
+        }
         let player = msg::source();
         let partially_decrypted_cards = storage
             .partially_decrypted_cards
@@ -1081,6 +1097,28 @@ impl PokerService {
 
     pub fn encrypted_table_cards(&self) -> Vec<EncryptedCard> {
         self.get().table_cards.clone()
+    }
+
+    pub fn table_cards_to_decrypt(&self) -> Vec<EncryptedCard> {
+        let storage = self.get();
+        let (base_index, expected_count) = match &storage.status {
+            Status::Play { stage } => match stage {
+                Stage::WaitingTableCardsAfterPreFlop => (0, 3),
+                Stage::WaitingTableCardsAfterFlop => (3, 1),
+                Stage::WaitingTableCardsAfterTurn => (4, 1),
+                _ => return vec![],
+            },
+            Status::WaitingForAllTableCardsToBeDisclosed => {
+                match storage.revealed_table_cards.len() {
+                    0 => (0, 5),
+                    3 => (3, 2),
+                    4 => (4, 1),
+                    _ => return vec![]
+                }               
+            }
+            _ => return vec![],
+        };
+        storage.table_cards[base_index..base_index + expected_count].to_vec().clone()
     }
 
     pub fn revealed_table_cards(&self) -> Vec<Card> {
