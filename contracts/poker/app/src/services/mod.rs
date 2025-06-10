@@ -106,8 +106,6 @@ pub struct Config {
 pub struct Participant {
     name: String,
     balance: u128,
-    card_1: Option<u32>,
-    card_2: Option<u32>,
     pk: PublicKey,
 }
 
@@ -157,6 +155,10 @@ pub enum Event {
     Killed {
         inheritor: ActorId,
     },
+    AllPartialDecryptionsSubmited,
+    TablePartialDecryptionsSubmited,
+    CardsDisclosed,
+    GameCanceled
 }
 
 pub struct PokerService(());
@@ -175,8 +177,6 @@ impl PokerService {
             Participant {
                 name: config.admin_name.clone(),
                 balance: config.starting_bank,
-                card_1: None,
-                card_2: None,
                 pk: pk.clone(),
             },
         );
@@ -267,8 +267,6 @@ impl PokerService {
             Participant {
                 name: player_name,
                 balance: storage.config.starting_bank,
-                card_1: None,
-                card_2: None,
                 pk: pk.clone(),
             },
         );
@@ -301,7 +299,7 @@ impl PokerService {
         let msg_src = msg::source();
 
         match storage.status {
-            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } => {
+            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } | Status::WaitingStart => {
             }
             _ => {
                 panic("Wrong status");
@@ -319,6 +317,7 @@ impl PokerService {
 
             storage.participants.remove(&msg_src);
             storage.active_participants.remove(&msg_src);
+            storage.status = Status::Registration;
         } else {
             panic("You are not player");
         }
@@ -345,6 +344,18 @@ impl PokerService {
             }
         }
 
+        storage.encrypted_deck = None;
+        storage.deck_position = 0;
+        storage.encrypted_cards = HashMap::new();
+        storage.table_cards = Vec::new();
+        storage.partially_decrypted_cards = HashMap::new();
+        storage.revealed_table_cards = Vec::new();
+        storage.revealed_players = HashMap::new();
+        storage.partial_table_card_decryptions = HashMap::new();
+        storage.betting_bank = HashMap::new();
+        storage.all_in_players = Vec::new();
+        storage.already_invested_in_the_circle = HashMap::new();
+
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingShuffleVerification;
         } else {
@@ -361,7 +372,7 @@ impl PokerService {
     ///
     /// Panics if:
     /// - caller is not admin
-    /// - wrong game status (not Registration/WaitingShuffleVerification/Finished)
+    /// - wrong game status (not Registration/WaitingShuffleVerification/Finished/WaitingStart)
     ///
     /// Performs:
     /// 1. Batch transfer of all player balances via PTS contract
@@ -376,7 +387,7 @@ impl PokerService {
             panic("Access denied");
         }
         match storage.status {
-            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } => {
+            Status::Registration | Status::WaitingShuffleVerification | Status::Finished { .. } | Status::WaitingStart => {
             }
             _ => {
                 panic("Wrong status");
@@ -413,6 +424,49 @@ impl PokerService {
         exec::exit(inheritor);
     }
 
+    pub async fn cancel_game(&mut self) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if msg_src != storage.config.admin_id {
+            panic("Access denied");
+        }
+        match storage.status {
+            Status::Registration | Status::Finished {..} => {
+                panic("Wrong status");
+            }
+            _ => {
+                for (id, bet) in storage.betting_bank.iter() {
+                    storage
+                        .participants
+                        .entry(*id)
+                        .and_modify(|participant| participant.balance += bet);
+                }
+
+                storage.encrypted_deck = None;
+                storage.deck_position = 0;
+                storage.encrypted_cards = HashMap::new();
+                storage.table_cards = Vec::new();
+                storage.partially_decrypted_cards = HashMap::new();
+                storage.revealed_table_cards = Vec::new();
+                storage.revealed_players = HashMap::new();
+                storage.partial_table_card_decryptions = HashMap::new();
+                storage.betting_bank = HashMap::new();
+                storage.all_in_players = Vec::new();
+                storage.already_invested_in_the_circle = HashMap::new();
+
+                if storage.participants.len() == storage.config.number_of_participants as usize {
+                    storage.status = Status::WaitingShuffleVerification;
+                } else {
+                    storage.status = Status::Registration;
+                }
+            }
+        }
+        
+
+        self.emit_event(Event::GameCanceled)
+            .expect("Notification Error");
+    }
+
     /// Admin-only function to forcibly remove a player and refund their balance.
     ///
     /// Panics if:
@@ -433,7 +487,8 @@ impl PokerService {
         }
 
         if storage.status != Status::Registration
-            && storage.status != Status::WaitingShuffleVerification
+            && storage.status != Status::WaitingShuffleVerification 
+            && storage.status != Status::WaitingStart
         {
             panic("Wrong status");
         }
@@ -625,6 +680,9 @@ impl PokerService {
         if let Some(betting) = &mut storage.betting {
             betting.last_active_time = Some(exec::block_timestamp());
         }
+
+        self.emit_event(Event::AllPartialDecryptionsSubmited)
+            .expect("Event Invocation Error");
     }
 
     pub async fn submit_table_partial_decryptions(
@@ -713,6 +771,9 @@ impl PokerService {
                 betting.last_active_time = Some(exec::block_timestamp());
             }
         }
+
+        self.emit_event(Event::TablePartialDecryptionsSubmited)
+            .expect("Event Invocation Error");
     }
 
     /// Processes player actions during betting rounds.
@@ -886,7 +947,11 @@ impl PokerService {
                 winners: vec![*winner],
                 cash_prize: vec![prize],
             };
-            //self.emit_event(Event::Finished { winners: vec![*winner], cash_prize: vec![*betting_bank] }).expect("Event Invocation Error");
+            self.emit_event(Event::Finished {
+                winners: vec![*winner],
+                cash_prize: vec![prize],
+            })
+            .expect("Event Error");
         }
         // Check if the round is complete at the River stage
         else if betting.acted_players.len() == storage.active_participants.len()
@@ -897,7 +962,8 @@ impl PokerService {
         // Check if the round is complete before River stage
         else if betting.acted_players.len() == storage.active_participants.len() {
             // if there's only one active player left, there's no point in betting any more
-            if storage.active_participants.len() == 1 {
+            // and if there's nobody active player left(everybody call AllIn), there's no point in betting any more
+            if storage.active_participants.len() <= 1 {
                 storage.status = Status::WaitingForCardsToBeDisclosed;
             } else {
                 storage.active_participants.reset_turn_index();
@@ -951,7 +1017,7 @@ impl PokerService {
             .expect("Not in game");
 
         verify_cards(
-            &partially_decrypted_cards,
+            partially_decrypted_cards,
             instances.clone(),
             &storage.original_card_map,
         );
@@ -988,7 +1054,7 @@ impl PokerService {
 
             for (winner, prize) in winners.iter().zip(cash_prize.clone()) {
                 let participant = storage.participants.get_mut(winner).unwrap();
-                participant.balance = prize;
+                participant.balance += prize;
             }
 
             storage.status = Status::Finished {
@@ -1001,6 +1067,8 @@ impl PokerService {
             })
             .expect("Event Error");
         }
+
+        self.emit_event(Event::CardsDisclosed).expect("Event Error");
     }
 
     // Query
@@ -1055,5 +1123,9 @@ impl PokerService {
     }
     pub fn pts_actor_id(&self) -> ActorId {
         self.get().pts_actor_id
+    }
+
+    pub fn revealed_players(&self) -> Vec<(ActorId, (Card, Card))> {
+        self.get().revealed_players.clone().into_iter().collect()
     }
 }

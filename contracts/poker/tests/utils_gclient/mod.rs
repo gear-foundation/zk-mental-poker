@@ -65,7 +65,7 @@ pub async fn init(
     listener: &mut EventListener,
 ) -> Result<(ProgramId, ProgramId)> {
     // PTS
-    let path = "../pts/target/wasm32-gear/release/pts.opt.wasm";
+    let path = "../target/wasm32-gear/release/pts.opt.wasm";
     let accural: u128 = 10_000;
     let time_ms_between_balance_receipt: u64 = 10_000;
     let request = [
