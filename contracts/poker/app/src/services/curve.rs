@@ -176,10 +176,20 @@ pub fn verify_cards(
         panic!("Expected 2 cards with proofs");
     }
 
-    for (i, (declared_card, instance)) in instances.into_iter().enumerate() {
-        let (_, c1_part_coords) = parse_partial_decryption_inputs(&instance.public_input);
+    let c01 = partially_decrypted[0].clone().c0;
+    let c02 = partially_decrypted[1].clone().c0;
 
-        let encrypted = &partially_decrypted[i];
+    for (i, (declared_card, instance)) in instances.into_iter().enumerate() {
+        let (c0, c1_part_coords) = parse_partial_decryption_inputs(&instance.public_input);
+
+        let encrypted = if compare_points(&c0, &c01) {
+            &partially_decrypted[0]
+        } else if compare_points(&c0, &c02) {
+            &partially_decrypted[1]
+        } else {
+            panic!("Card not found")
+        };
+
         let c1_point = deserialize_bandersnatch_coords(&encrypted.c1);
         let c1_part = deserialize_bandersnatch_coords(&c1_part_coords);
 
@@ -188,7 +198,6 @@ pub fn verify_cards(
         let Some(expected_card) = find_card_by_point(card_map, &decrypted_point) else {
             panic!("Decrypted point not found in card map");
         };
-
         if declared_card != expected_card {
             panic!("Declared card does not match actual decrypted card");
         }

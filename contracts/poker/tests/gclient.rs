@@ -706,19 +706,24 @@ async fn test_all_in_case() -> Result<()> {
         }
     }
 
-     // get revealed cards
-     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+    // get revealed cards
+    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
 
-     println!(" revealed table_cards: {:?}", table_cards);
+    println!(" revealed table_cards: {:?}", table_cards);
 
-     println!("Players reveal their cards..");
+    println!("Players reveal their cards..");
 
-     reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
+    reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
 
     Ok(())
 }
 
-async fn reveal_player_cards( program_id: ProgramId, api: &GearApi, listener: &mut EventListener, pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &'static str)>) -> Result<()> {
+async fn reveal_player_cards(
+    program_id: ProgramId,
+    api: &GearApi,
+    listener: &mut EventListener,
+    pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &'static str)>,
+) -> Result<()> {
     let player_cards = load_cards_with_proofs("tests/test_data/player_decryptions.json");
 
     let (_, card_map) = init_deck_and_card_map();
