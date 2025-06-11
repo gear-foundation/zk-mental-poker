@@ -845,6 +845,32 @@ async fn test_all_in_case_2() -> Result<()> {
     assert_eq!(participants[1].1.balance, 0);
     assert_eq!(participants[2].1.balance, 0);
 
+    let table_cards_proofs =
+        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
+    for (pk, _, _, name) in pk_to_actor_id.iter() {
+        let entry = table_cards_proofs
+            .iter()
+            .find(|(stored_pk, _)| stored_pk == pk);
+
+        if let Some((_, (_, proofs))) = entry {
+            let proofs: Vec<_> = proofs[3..5].to_vec();
+            let api = api.clone().with(name).expect("Unable to change signer.");
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+            assert!(listener.message_processed(message_id).await?.succeed());
+        } else {
+            panic!("No decryptions found for public key: {:?}", pk);
+        }
+    }
+
+    // get revealed cards
+    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+
+    println!(" revealed table_cards: {:?}", table_cards);
+
+    println!("Players reveal their cards..");
+
+    reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
+
     Ok(())
 }
 

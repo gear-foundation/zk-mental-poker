@@ -686,10 +686,8 @@ impl PokerService {
 
     pub async fn submit_all_partial_decryptions(&mut self, instances: Vec<VerificationVariables>) {
         let storage = self.get_mut();
-        sails_rs::gstd::debug!("ENCRYPTED {:?}", storage.encrypted_cards.clone());
 
         let cards_by_player = get_decrypted_points(&instances, &storage.encrypted_cards);
-        sails_rs::gstd::debug!("CARDS {:?}", cards_by_player.clone());
 
         storage
             .decrypt_verificaiton_context
