@@ -8,14 +8,6 @@ pub fn panic(err: impl Debug) -> ! {
     ext::panic_bytes(format!("{err:?}").as_bytes())
 }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct TurnManager<Id> {
-    active_ids: Vec<Id>,
-    turn_index: u64,
-}
-
 type PartialDecryption = [Vec<u8>; 3];
 #[derive(Default, Debug)]
 pub struct PartialDecryptionsByCard {
@@ -32,6 +24,15 @@ impl PartialDecryptionsByCard {
         self.participants.insert(actor);
     }
 }
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct TurnManager<Id> {
+    active_ids: Vec<Id>,
+    turn_index: u64,
+}
+
 impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     pub fn new() -> Self {
         Self {
@@ -148,6 +149,14 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         };
 
         self.active_ids.get(prev_index)
+    }
+    
+    pub fn set(&mut self, round: u64) {
+        if self.active_ids.is_empty() || round == 0 {
+            return;
+        }
+
+        self.turn_index = (self.turn_index + round) % self.active_ids.len() as u64;
     }
 }
 

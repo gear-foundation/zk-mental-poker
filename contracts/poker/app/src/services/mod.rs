@@ -47,7 +47,7 @@ struct Storage {
     revealed_players: HashMap<ActorId, (Card, Card)>,
     status: Status,
     config: Config,
-    round: u32,
+    round: u64,
     betting: Option<BettingStage>,
     betting_bank: HashMap<ActorId, u128>,
     all_in_players: Vec<ActorId>,
@@ -580,6 +580,9 @@ impl PokerService {
 
         self.deal_player_cards();
         self.deal_table_cards(5);
+
+        storage.active_participants.reset_turn_index();
+        storage.active_participants.set(storage.round);
 
         let sb_player = storage
             .active_participants
@@ -1175,7 +1178,7 @@ impl PokerService {
     pub fn config(&self) -> &'static Config {
         &self.get().config
     }
-    pub fn round(&self) -> u32 {
+    pub fn round(&self) -> u64 {
         self.get().round
     }
     pub fn betting(&self) -> &'static Option<BettingStage> {
