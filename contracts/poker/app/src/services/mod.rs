@@ -160,6 +160,8 @@ pub enum Event {
     TablePartialDecryptionsSubmited,
     CardsDisclosed,
     GameCanceled,
+    WaitingForCardsToBeDisclosed,
+    WaitingForAllTableCardsToBeDisclosed
 }
 
 pub struct PokerService(());
@@ -1006,6 +1008,8 @@ impl PokerService {
             && *stage == Stage::River
         {
             storage.status = Status::WaitingForCardsToBeDisclosed;
+            self.emit_event(Event::WaitingForCardsToBeDisclosed)
+                .expect("Event Error");
         }
         // Check if the round is complete before River stage
         else if betting.acted_players.len() == storage.active_participants.len() {
@@ -1013,6 +1017,8 @@ impl PokerService {
             // and if there's nobody active player left(everybody call AllIn), there's no point in betting any more
             if storage.active_participants.len() <= 1 {
                 storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
+                self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
+                    .expect("Event Error");
             } else {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
