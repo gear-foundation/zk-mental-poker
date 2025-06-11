@@ -32,7 +32,7 @@ use std::io::BufWriter;
 use std::str::FromStr;
 use std::{fs::File, path::Path};
 use utils_gclient::*;
-use crate::zk_loader::{load_shuffle_proofs, load_encrypted_table_cards};
+use crate::zk_loader::{load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
 
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
@@ -871,6 +871,17 @@ async fn test_all_in_case_2() -> Result<()> {
 
     reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
 
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    println!("status: {:?}", status);
+
+    assert_eq!(
+        status,
+        Status::Finished {
+            winners: vec![api_1.get_actor_id()],
+            cash_prize: vec![3000]
+        }
+    );
+
     Ok(())
 }
 
@@ -926,6 +937,8 @@ async fn test_restart_and_all_in_case() -> Result<()> {
 
     let proofs = load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
     let deck = load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
+    let decrypt_proofs = load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
+    let pk_cards = load_partial_decryptions("tests/test_data/partial_decryptions.json");
 
     // Shuffle deck
     println!("SHUFFLE");
@@ -937,9 +950,22 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let stage = get_state!(api: &api_0, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
+    // Verify partial decryptions
+    let cards_by_actor: Vec<(ActorId, [EncryptedCard; 2])> = pk_cards
+        .into_iter()
+        .map(|(pk, cards)| {
+            let id = pk_to_actor_id
+                .iter()
+                .find(|(pk1, _, _, _)| pk1 == &pk)
+                .map(|(_, _, id, _)| *id)
+                .expect("PublicKey not found");
+            (id, cards)
+        })
+        .collect();
 
+    println!("DECRYPT");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));
+    assert!(listener.message_processed(message_id).await?.succeed());
 
     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
     assert!(listener.message_processed(message_id).await?.succeed());

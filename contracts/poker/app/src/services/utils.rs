@@ -158,6 +158,11 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
 
         self.turn_index = (self.turn_index + round) % self.active_ids.len() as u64;
     }
+    
+    pub fn clear_all(&mut self) {
+        self.active_ids.clear();
+        self.turn_index = 0;
+    }
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]

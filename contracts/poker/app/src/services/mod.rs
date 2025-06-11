@@ -364,6 +364,11 @@ impl PokerService {
         storage.all_in_players = Vec::new();
         storage.already_invested_in_the_circle = HashMap::new();
 
+        storage.active_participants.clear_all();
+        for (id, _) in storage.participants.iter() {
+            storage.active_participants.add(*id);
+        }
+
         if storage.participants.len() == storage.config.number_of_participants as usize {
             storage.status = Status::WaitingShuffleVerification;
         } else {
