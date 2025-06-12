@@ -1005,6 +1005,48 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_cancel_game() -> Result<()> {
+    let api = GearApi::dev().await?;
+
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+
+    let api_0 = api
+        .clone()
+        .with(USERS_STR[0])
+        .expect("Unable to change signer.");
+    let api_1 = api
+        .clone()
+        .with(USERS_STR[1])
+        .expect("Unable to change signer.");
+    let api_2 = api
+        .clone()
+        .with(USERS_STR[2])
+        .expect("Unable to change signer.");
+
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
+    assert!(listener.message_processed(message_id).await?.succeed());
+    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+    println!("stage: {:?}", stage);
+
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "CancelGame", payload: ());
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    println!("status: {:?}", status);
+    assert_eq!(status, Status::WaitingShuffleVerification);
+    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+    println!("participants: {:?}", participants);
+    assert_eq!(participants[0].1.balance, 1000);
+    assert_eq!(participants[1].1.balance, 1000);
+    assert_eq!(participants[2].1.balance, 1000);
+
+    Ok(())
+}
+
 
 async fn reveal_player_cards(
     program_id: ProgramId,
