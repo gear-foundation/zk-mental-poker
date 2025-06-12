@@ -88,7 +88,7 @@ pub async fn init(
 
     // POKER
     let config = Config {
-        time_per_move_ms: 10_000_000,
+        time_per_move_ms: 30_000,
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),
         lobby_name: "Lobby".to_string(),

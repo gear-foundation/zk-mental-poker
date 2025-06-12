@@ -34,6 +34,14 @@ use std::{fs::File, path::Path};
 use utils_gclient::*;
 use crate::zk_loader::{load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
 
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct TurnManager {
+    active_ids: Vec<ActorId>,
+    turn_index: u64,
+}
+
 #[tokio::test]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
@@ -491,40 +499,6 @@ async fn test_time_limit() -> Result<()> {
     assert!(listener.blocks_running().await?);
 
     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
-    let time_skip = time::Duration::from_secs(90);
-    sleep(time_skip);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let api = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    assert_eq!(stage, None::<BettingStage>);
-    println!("stage: {:?}", stage);
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    assert_eq!(
-        status,
-        Status::Finished {
-            winners: vec![],
-            cash_prize: vec![]
-        }
-    );
-    println!("status: {:?}", status);
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_time_limit_only_one_player_stayed() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
     let time_skip = time::Duration::from_secs(60);
     sleep(time_skip);
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
@@ -534,16 +508,50 @@ async fn test_time_limit_only_one_player_stayed() -> Result<()> {
         .clone()
         .with(USERS_STR[1])
         .expect("Unable to change signer.");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
     assert!(listener.message_processed(message_id).await?.succeed());
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
     println!("stage: {:?}", stage);
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
     println!("status: {:?}", status);
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
+    assert_eq!(
+        status,
+        Status::Finished {
+            winners: vec![api.get_actor_id()],
+            cash_prize: vec![15]
+        }
+    );
+    
     Ok(())
 }
+
+// #[tokio::test]
+// async fn test_time_limit_only_one_player_stayed() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+//     let time_skip = time::Duration::from_secs(60);
+//     sleep(time_skip);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let api = api
+//         .clone()
+//         .with(USERS_STR[1])
+//         .expect("Unable to change signer.");
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     Ok(())
+// }
 
 #[tokio::test]
 async fn test_registration() -> Result<()> {

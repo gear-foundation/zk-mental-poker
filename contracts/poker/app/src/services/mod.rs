@@ -153,9 +153,7 @@ pub enum Event {
         winners: Vec<ActorId>,
         cash_prize: Vec<u128>,
     },
-    Killed {
-        inheritor: ActorId,
-    },
+    Killed,
     AllPartialDecryptionsSubmited,
     TablePartialDecryptionsSubmited,
     CardsDisclosed,
@@ -392,10 +390,10 @@ impl PokerService {
     /// Performs:
     /// 1. Batch transfer of all player balances via PTS contract
     /// 2. Sends DeleteLobby request to PokerFactory
-    /// 3. Emits Killed event and transfers remaining funds to inheritor
+    /// 3. Emits Killed event and transfers remaining funds to admin
     ///
     /// WARNING: Irreversible operation
-    pub async fn kill(&mut self, inheritor: ActorId) {
+    pub async fn kill(&mut self) {
         let storage = self.get();
         let msg_src = msg::source();
         if msg_src != storage.config.admin_id {
@@ -436,9 +434,9 @@ impl PokerService {
             .await
             .expect("PokerFactory: Error DeleteLobby");
 
-        self.emit_event(Event::Killed { inheritor })
+        self.emit_event(Event::Killed)
             .expect("Notification Error");
-        exec::exit(inheritor);
+        exec::exit(storage.factory_actor_id);
     }
 
     pub async fn cancel_game(&mut self) {
@@ -849,36 +847,44 @@ impl PokerService {
 
         let betting = storage.betting.as_mut().expect("No betting");
 
+        let (_, participant) = storage
+            .participants
+            .iter_mut()
+            .find(|(id, _)| *id == player)
+            .unwrap();
+
         let last_active_time = betting.last_active_time.expect("No last active time");
         let current_time = exec::block_timestamp();
         let number_of_passes = (current_time - last_active_time) / storage.config.time_per_move_ms;
 
         if number_of_passes != 0 {
-            let current_turn_player_id = storage
-                .active_participants
-                .skip_and_remove(number_of_passes);
-
-            if let Some(current_turn_player_id) = current_turn_player_id {
-                if current_turn_player_id != player {
+            if let Some(next_or_last) = storage.active_participants.skip_and_remove(number_of_passes) {
+                if storage.active_participants.len() <= 1 {
+                    let prize = storage.betting_bank.values().sum();
+                    participant.balance += prize;
+                    storage.status = Status::Finished {
+                        winners: vec![next_or_last],
+                        cash_prize: vec![prize],
+                    };
+                    storage.betting = None;
+                    self.emit_event(Event::Finished {
+                        winners: vec![next_or_last],
+                        cash_prize: vec![prize],
+                    })
+                    .expect("Event Error");
+                    return;
+                } else if next_or_last != player {
                     panic!("Not your turn!");
                 }
             } else {
-                storage.status = Status::Finished {
-                    winners: vec![],
-                    cash_prize: vec![],
-                };
-                storage.betting = None;
-                return;
+                panic!("No active players");
             }
         } else if betting.turn != player {
             panic!("Not your turn!");
         }
 
-        let (_, participant) = storage
-            .participants
-            .iter_mut()
-            .find(|(id, _)| *id == player)
-            .unwrap(); // Process the player's action
+
+        // Process the player's action
         match action {
             Action::Fold => {
                 storage.active_participants.remove(&player);

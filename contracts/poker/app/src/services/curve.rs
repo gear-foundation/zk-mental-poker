@@ -179,7 +179,7 @@ pub fn verify_cards(
     let c01 = partially_decrypted[0].clone().c0;
     let c02 = partially_decrypted[1].clone().c0;
 
-    for (i, (declared_card, instance)) in instances.into_iter().enumerate() {
+    for (declared_card, instance) in instances.into_iter() {
         let (c0, c1_part_coords) = parse_partial_decryption_inputs(&instance.public_input);
 
         let encrypted = if compare_points(&c0, &c01) {
