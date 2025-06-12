@@ -8,14 +8,6 @@ pub fn panic(err: impl Debug) -> ! {
     ext::panic_bytes(format!("{err:?}").as_bytes())
 }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct TurnManager<Id> {
-    active_ids: Vec<Id>,
-    turn_index: u64,
-}
-
 type PartialDecryption = [Vec<u8>; 3];
 #[derive(Default, Debug)]
 pub struct PartialDecryptionsByCard {
@@ -32,6 +24,15 @@ impl PartialDecryptionsByCard {
         self.participants.insert(actor);
     }
 }
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct TurnManager<Id> {
+    active_ids: Vec<Id>,
+    turn_index: u64,
+}
+
 impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     pub fn new() -> Self {
         Self {
@@ -67,11 +68,50 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Some(id)
     }
 
+    // pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
+    //     let len = self.active_ids.len();
+    //     if len == 0 || n == 0 {
+    //         return None;
+    //     }
+
+    //     let mut idx = if self.turn_index == 0 {
+    //         self.active_ids.len() - 1
+    //     } else {
+    //         (self.turn_index - 1) as usize
+    //     };
+
+    //     for _ in 0..n {
+    //         if self.active_ids.is_empty() {
+    //             return None;
+    //         }
+
+    //         self.active_ids.remove(idx);
+    //         if idx >= self.active_ids.len() {
+    //             idx = 0;
+    //         }
+
+    //         if self.turn_index as usize > idx {
+    //             self.turn_index -= 1;
+    //         } else if self.turn_index as usize == idx && self.turn_index > 0 {
+    //             self.turn_index -= 1;
+    //         }
+    //     }
+
+    //     if self.active_ids.is_empty() {
+    //         None
+    //     } else {
+    //         let id = Some(self.active_ids[self.turn_index as usize].clone());
+    //         self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
+    //         id
+    //     }
+    // }
+
     pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
-        let len = self.active_ids.len();
-        if len == 0 || n == 0 {
+        if self.active_ids.is_empty() || n == 0 {
             return None;
         }
+
+        let mut last_removed = None;
 
         let mut idx = if self.turn_index == 0 {
             self.active_ids.len() - 1
@@ -81,13 +121,15 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
 
         for _ in 0..n {
             if self.active_ids.is_empty() {
-                return None;
+                break;
             }
 
-            self.active_ids.remove(idx);
             if idx >= self.active_ids.len() {
                 idx = 0;
             }
+
+            let removed = self.active_ids.remove(idx);
+            last_removed = Some(removed.clone());
 
             if self.turn_index as usize > idx {
                 self.turn_index -= 1;
@@ -96,14 +138,17 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
             }
         }
 
-        if self.active_ids.is_empty() {
-            None
+        let result_id = if self.active_ids.is_empty() {
+            last_removed.expect("At least one player should have been removed")
         } else {
-            let id = Some(self.active_ids[self.turn_index as usize].clone());
+            let id = self.active_ids[self.turn_index as usize].clone();
             self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
             id
-        }
+        };
+
+        Some(result_id)
     }
+
 
     pub fn reset_turn_index(&mut self) {
         self.turn_index = 0;
@@ -148,6 +193,19 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         };
 
         self.active_ids.get(prev_index)
+    }
+    
+    pub fn set(&mut self, round: u64) {
+        if self.active_ids.is_empty() || round == 0 {
+            return;
+        }
+
+        self.turn_index = (self.turn_index + round) % self.active_ids.len() as u64;
+    }
+    
+    pub fn clear_all(&mut self) {
+        self.active_ids.clear();
+        self.turn_index = 0;
     }
 }
 
