@@ -1,6 +1,6 @@
 #![no_std]
 
-mod services;
+pub mod services;
 use sails_rs::prelude::*;
 use services::{Config, PokerService, PublicKey, VerifyingKeyBytes};
 

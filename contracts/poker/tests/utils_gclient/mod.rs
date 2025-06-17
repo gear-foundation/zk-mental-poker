@@ -94,7 +94,6 @@ pub async fn init(
         lobby_name: "Lobby".to_string(),
         small_blind: 5,
         big_blind: 10,
-        number_of_participants: 3,
         starting_bank: 1000,
     };
     let pts_id_bytes: [u8; 32] = pts_program_id.into();

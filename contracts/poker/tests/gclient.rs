@@ -10,6 +10,10 @@ use crate::zk_loader::{
     get_vkey, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
     DecryptedCardWithProof,
 };
+use crate::zk_loader::{
+    load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
+    load_shuffle_proofs,
+};
 use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::Fq;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};
@@ -32,7 +36,6 @@ use std::io::BufWriter;
 use std::str::FromStr;
 use std::{fs::File, path::Path};
 use utils_gclient::*;
-use crate::zk_loader::{load_shuffle_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions};
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]
@@ -521,7 +524,7 @@ async fn test_time_limit() -> Result<()> {
             cash_prize: vec![15]
         }
     );
-    
+
     Ok(())
 }
 
@@ -1009,7 +1012,6 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     assert_eq!(participants[1].1.balance, 5);
     assert_eq!(participants[2].1.balance, 0);
 
-
     Ok(())
 }
 
@@ -1054,7 +1056,6 @@ async fn test_cancel_game() -> Result<()> {
 
     Ok(())
 }
-
 
 async fn reveal_player_cards(
     program_id: ProgramId,

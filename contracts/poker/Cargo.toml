@@ -13,11 +13,16 @@ sails-rs = { workspace = true, features = ["wasm-builder"] }
 sails-idl-gen.workspace = true
 
 [dev-dependencies]
+pts = { path = "../pts", features = ["wasm-binary"] }
 poker = { path = ".", features = ["wasm-binary"] }
 poker-client = { path = "client" }
+pts-client = { path = "../pts/client" }
 sails-rs = { workspace = true, features = ["gtest"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+gbuiltin-bls381.workspace = true
 gclient.workspace = true
+gtest.workspace = true
+gstd.workspace = true
 hex-literal.workspace = true
 gear-core.workspace = true
 ark-bls12-381.workspace = true
