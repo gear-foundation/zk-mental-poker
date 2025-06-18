@@ -5,36 +5,26 @@ use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
-use crate::zk_loader::decimal_str_to_bytes_32;
 use crate::zk_loader::{
     get_vkey, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
-    DecryptedCardWithProof,
 };
+use ark_ed_on_bls12_381_bandersnatch::Fr;
 use crate::zk_loader::{
     load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
     load_shuffle_proofs,
 };
-use ark_ec::AffineRepr;
-use ark_ed_on_bls12_381_bandersnatch::Fq;
-use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fr};
-use ark_ff::PrimeField;
-use ark_serialize::CanonicalSerialize;
+use crate::{build_player_card_disclosure, init_deck_and_card_map};
+
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
-use num_bigint::BigUint;
 use poker_client::EncryptedCard;
 use poker_client::PublicKey;
-use poker_client::VerificationVariables;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
-use sails_rs::collections::HashMap;
 use sails_rs::TypeInfo;
-use serde::Deserialize;
-use serde::Serialize;
+
 use std::fs;
-use std::io::BufWriter;
-use std::str::FromStr;
-use std::{fs::File, path::Path};
+
 use utils_gclient::*;
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -132,13 +122,12 @@ async fn upload_contracts_to_testnet() -> Result<()> {
 
     // create lobby
     println!("create lobby");
-    let config = LobbyConfig {
+    let config = poker_factory_client::LobbyConfig {
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),
         lobby_name: "Lobby".to_string(),
         small_blind: 5,
         big_blind: 10,
-        number_of_participants: 3,
         starting_bank: 1000,
         time_per_move_ms: 15_000,
     };
@@ -161,112 +150,10 @@ async fn upload_contracts_to_testnet() -> Result<()> {
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
-pub struct LobbyConfig {
-    admin_id: ActorId,
-    admin_name: String,
-    lobby_name: String,
-    small_blind: u128,
-    big_blind: u128,
-    number_of_participants: u16,
-    starting_bank: u128,
-    time_per_move_ms: u64,
-}
-
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
 pub struct Config {
     pub lobby_code_id: CodeId,
     pub gas_for_program: u64,
     pub gas_for_reply_deposit: u64,
-}
-
-pub fn init_deck_and_card_map() -> (Vec<EdwardsProjective>, HashMap<EdwardsProjective, Card>) {
-    let mut encrypted_deck: Vec<EdwardsProjective> = Vec::with_capacity(52);
-
-    let num_cards = 52;
-    let base_affine = EdwardsAffine::generator();
-    let base_point: EdwardsProjective = base_affine.into();
-
-    for i in 1..=num_cards {
-        let scalar = Fr::from(i as u64);
-        let point = base_point * scalar;
-
-        encrypted_deck.push(point);
-    }
-
-    let card_map = build_card_map(encrypted_deck.clone());
-
-    (encrypted_deck, card_map)
-}
-
-pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective, Card> {
-    let mut card_map = HashMap::new();
-
-    let suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
-    let values = 2..=14;
-
-    let mut index = 0;
-    for suit in &suits {
-        for value in values.clone() {
-            card_map.insert(
-                deck[index],
-                Card {
-                    suit: suit.clone(),
-                    value,
-                },
-            );
-
-            index += 1;
-        }
-    }
-
-    card_map
-}
-
-pub fn find_card_by_point(
-    card_map: &HashMap<EdwardsProjective, Card>,
-    point: &EdwardsProjective,
-) -> Option<Card> {
-    card_map.iter().find_map(|(p, card)| {
-        if (point.x * p.z == p.x * point.z) && (point.y * p.z == p.y * point.z) {
-            Some(card.clone())
-        } else {
-            None
-        }
-    })
-}
-
-pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
-    let x = Fq::from_le_bytes_mod_order(&coords[0]);
-    let y = Fq::from_le_bytes_mod_order(&coords[1]);
-    let z = Fq::from_le_bytes_mod_order(&coords[2]);
-    let t = x * y;
-
-    EdwardsProjective::new(x, y, t, z)
-}
-
-pub fn build_player_card_disclosure(
-    data: Vec<(PublicKey, Vec<DecryptedCardWithProof>)>,
-    card_map: &HashMap<EdwardsProjective, Card>,
-) -> Vec<(PublicKey, Vec<(Card, VerificationVariables)>)> {
-    let mut result = Vec::new();
-
-    for (pk, decs) in data {
-        let mut verified = Vec::new();
-
-        for entry in decs {
-            let point = deserialize_bandersnatch_coords(&entry.decrypted);
-            let card =
-                find_card_by_point(card_map, &point).expect("Card not found for decrypted point");
-
-            verified.push((card, entry.proof));
-        }
-
-        result.push((pk, verified));
-    }
-
-    result
 }
 
 #[tokio::test]

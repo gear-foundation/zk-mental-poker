@@ -17,6 +17,7 @@ pts = { path = "../pts", features = ["wasm-binary"] }
 poker = { path = ".", features = ["wasm-binary"] }
 poker-client = { path = "client" }
 pts-client = { path = "../pts/client" }
+poker-factory-client = { path = "../poker-factory/client" }
 sails-rs = { workspace = true, features = ["gtest"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 gbuiltin-bls381.workspace = true

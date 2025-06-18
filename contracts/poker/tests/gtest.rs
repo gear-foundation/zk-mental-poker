@@ -12,10 +12,12 @@ use sails_rs::{
     gtest::{calls::*, System},
 };
 mod utils_gclient;
+use utils_gclient::{build_player_card_disclosure, init_deck_and_card_map};
 use utils_gclient::zk_loader::{
-    get_vkey, load_encrypted_table_cards, load_partial_decrypt_proofs, load_player_public_keys,
-    load_shuffle_proofs, load_table_cards_proofs,
+    get_vkey, load_cards_with_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs,
+    load_player_public_keys, load_shuffle_proofs, load_table_cards_proofs,
 };
+
 const USERS: [u64; 6] = [42, 43, 44, 45, 46, 47];
 
 const BUILTIN_BLS381: ActorId = ActorId::new(hex!(
@@ -151,9 +153,6 @@ async fn gtest_basic_workflow() {
     let program_code_id = remoting.system().submit_code(poker::WASM_BINARY);
 
     let program_factory = poker_client::PokerFactory::new(remoting.clone());
-
-    let shuffle_vkey = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = get_vkey("tests/test_data/decrypt_vkey.json");
 
     let program_id = program_factory
         .new(
@@ -415,7 +414,19 @@ async fn gtest_basic_workflow() {
     println!("Cards on table {:?}", table_cards);
 
     println!("Players reveal their cards..");
-   // let player_cards = load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
+    let player_cards = load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
+    let (_, card_map) = init_deck_and_card_map();
+    let hands = build_player_card_disclosure(player_cards, &card_map);
+    
+    for i in 0..USERS.len() {
+        let proofs = hands[i].1.clone();
+        service_client
+            .card_disclosure(proofs)
+            .with_args(GTestArgs::new(USERS[i].into()))
+            .send_recv(program_id)
+            .await
+            .unwrap();
+    }
 }
 
 async fn check_status(
