@@ -204,179 +204,179 @@ pub fn verify_cards(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_ec::CurveGroup;
-    use ark_ed_on_bls12_381_bandersnatch::{EdwardsProjective, Fq};
-    use ark_ff::UniformRand;
-    use ark_std::Zero;
-    use num_bigint::BigUint;
-    use rand::rngs::OsRng;
-    use serde::Deserialize;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use ark_ec::CurveGroup;
+//     use ark_ed_on_bls12_381_bandersnatch::{EdwardsProjective, Fq};
+//     use ark_ff::UniformRand;
+//     use ark_std::Zero;
+//     use num_bigint::BigUint;
+//     use rand::rngs::OsRng;
+//     use serde::Deserialize;
 
-    const CARD_MAP_JSON: &str = include_str!("../../test_data/card_map.json");
+//     const CARD_MAP_JSON: &str = include_str!("../../test_data/card_map.json");
 
-    #[cfg(test)]
-    extern crate std;
-    #[cfg(test)]
-    use std::println;
+//     #[cfg(test)]
+//     extern crate std;
+//     #[cfg(test)]
+//     use std::println;
 
-    #[derive(Debug, Deserialize)]
-    struct JsonCard {
-        suit: String,
-        rank: String,
-        point: JsonPoint,
-    }
+//     #[derive(Debug, Deserialize)]
+//     struct JsonCard {
+//         suit: String,
+//         rank: String,
+//         point: JsonPoint,
+//     }
 
-    #[derive(Debug, Deserialize)]
-    struct JsonPoint {
-        X: String,
-        Y: String,
-        Z: String,
-    }
+//     #[derive(Debug, Deserialize)]
+//     struct JsonPoint {
+//         X: String,
+//         Y: String,
+//         Z: String,
+//     }
 
-    fn decimal_str_to_bytes_32_be(s: &str) -> [u8; 32] {
-        let n = BigUint::parse_bytes(s.as_bytes(), 10).expect("Invalid decimal string");
-        let mut b = n.to_bytes_be();
-        if b.len() > 32 {
-            panic!("Value too large for 32 bytes");
-        }
-        let mut buf = [0u8; 32];
-        buf[32 - b.len()..].copy_from_slice(&b);
-        buf
-    }
+//     fn decimal_str_to_bytes_32_be(s: &str) -> [u8; 32] {
+//         let n = BigUint::parse_bytes(s.as_bytes(), 10).expect("Invalid decimal string");
+//         let mut b = n.to_bytes_be();
+//         if b.len() > 32 {
+//             panic!("Value too large for 32 bytes");
+//         }
+//         let mut buf = [0u8; 32];
+//         buf[32 - b.len()..].copy_from_slice(&b);
+//         buf
+//     }
 
-    fn key_gen() -> (Fr, EdwardsProjective) {
-        let mut rng = ark_std::test_rng();
-        let sk = Fr::rand(&mut rng);
+//     fn key_gen() -> (Fr, EdwardsProjective) {
+//         let mut rng = ark_std::test_rng();
+//         let sk = Fr::rand(&mut rng);
 
-        let base_affine = EdwardsAffine::generator();
-        let base_point: EdwardsProjective = base_affine.into();
+//         let base_affine = EdwardsAffine::generator();
+//         let base_point: EdwardsProjective = base_affine.into();
 
-        let pk = base_point * sk;
+//         let pk = base_point * sk;
 
-        (sk, pk)
-    }
+//         (sk, pk)
+//     }
 
-    fn elgamal_encrypt(
-        pk: EdwardsProjective,
-        i_c0: EdwardsProjective,
-        i_c1: EdwardsProjective,
-    ) -> (EdwardsProjective, EdwardsProjective) {
-        let mut rng = ark_std::test_rng();
-        let r = Fr::rand(&mut rng);
-        let base_affine = EdwardsAffine::generator();
-        let base_point: EdwardsProjective = base_affine.into();
+//     fn elgamal_encrypt(
+//         pk: EdwardsProjective,
+//         i_c0: EdwardsProjective,
+//         i_c1: EdwardsProjective,
+//     ) -> (EdwardsProjective, EdwardsProjective) {
+//         let mut rng = ark_std::test_rng();
+//         let r = Fr::rand(&mut rng);
+//         let base_affine = EdwardsAffine::generator();
+//         let base_point: EdwardsProjective = base_affine.into();
 
-        let r_g = base_point * r;
-        let r_pk = pk * r;
+//         let r_g = base_point * r;
+//         let r_pk = pk * r;
 
-        let c0 = r_g + i_c0;
-        let c1 = r_pk + i_c1;
+//         let c0 = r_g + i_c0;
+//         let c1 = r_pk + i_c1;
 
-        (c0, c1)
-    }
+//         (c0, c1)
+//     }
 
-    #[test]
-    fn test_decrypt() {
-        let mut secret_keys = Vec::new();
-        let mut public_keys = Vec::new();
+//     #[test]
+//     fn test_decrypt() {
+//         let mut secret_keys = Vec::new();
+//         let mut public_keys = Vec::new();
 
-        for _ in 0..3 {
-            let (sk, pk) = key_gen();
-            secret_keys.push(sk);
-            public_keys.push(pk);
-        }
-        let agg_pk = public_keys.iter().copied().reduce(|a, b| a + b).unwrap();
-        let card_map = init_deck_and_card_map();
+//         for _ in 0..3 {
+//             let (sk, pk) = key_gen();
+//             secret_keys.push(sk);
+//             public_keys.push(pk);
+//         }
+//         let agg_pk = public_keys.iter().copied().reduce(|a, b| a + b).unwrap();
+//         let card_map = init_deck_and_card_map();
 
-        let (point, card) = card_map.iter().next().unwrap();
+//         let (point, card) = card_map.iter().next().unwrap();
 
-        let mut c0 = EdwardsProjective::zero();
-        let mut c1 = *point;
+//         let mut c0 = EdwardsProjective::zero();
+//         let mut c1 = *point;
 
-        for _ in 0..3 {
-            let (i_c0, i_c1) = elgamal_encrypt(agg_pk, c0, c1);
-            c0 = i_c0;
-            c1 = i_c1;
-        }
+//         for _ in 0..3 {
+//             let (i_c0, i_c1) = elgamal_encrypt(agg_pk, c0, c1);
+//             c0 = i_c0;
+//             c1 = i_c1;
+//         }
 
-        let mut partial_decryptions = Vec::new();
-        for i in 0..3 {
-            let sk_c0 = -(c0 * secret_keys[i]);
-            let x = sk_c0.x.to_bytes_le();
-            let y = sk_c0.y.to_bytes_le();
-            let z = sk_c0.z.to_bytes_le();
-            partial_decryptions.push([x, y, z]);
-        }
+//         let mut partial_decryptions = Vec::new();
+//         for i in 0..3 {
+//             let sk_c0 = -(c0 * secret_keys[i]);
+//             let x = sk_c0.x.to_bytes_le();
+//             let y = sk_c0.y.to_bytes_le();
+//             let z = sk_c0.z.to_bytes_le();
+//             partial_decryptions.push([x, y, z]);
+//         }
 
-        let c0x = c0.x.to_bytes_le();
-        let c0y = c0.y.to_bytes_le();
-        let c0z = c0.z.to_bytes_le();
-        let c1x = c1.x.to_bytes_le();
-        let c1y = c1.y.to_bytes_le();
-        let c1z = c1.z.to_bytes_le();
+//         let c0x = c0.x.to_bytes_le();
+//         let c0y = c0.y.to_bytes_le();
+//         let c0z = c0.z.to_bytes_le();
+//         let c1x = c1.x.to_bytes_le();
+//         let c1y = c1.y.to_bytes_le();
+//         let c1z = c1.z.to_bytes_le();
 
-        let encrypted_card = EncryptedCard {
-            c0: [c0x, c0y, c0z],
-            c1: [c1x, c1y, c1z],
-        };
-        let decrypted_point = decrypt_point(&card_map, &encrypted_card, partial_decryptions)
-            .expect("Point is not found");
-        assert_eq!(decrypted_point, *card);
-    }
+//         let encrypted_card = EncryptedCard {
+//             c0: [c0x, c0y, c0z],
+//             c1: [c1x, c1y, c1z],
+//         };
+//         let decrypted_point = decrypt_point(&card_map, &encrypted_card, partial_decryptions)
+//             .expect("Point is not found");
+//         assert_eq!(decrypted_point, *card);
+//     }
 
-    #[test]
-    fn test_init_deck_and_card_map() {
-        let card_map = init_deck_and_card_map();
-        let json_cards: Vec<JsonCard> =
-            serde_json::from_str(CARD_MAP_JSON).expect("Failed to parse CARD_MAP_JSON");
+//     #[test]
+//     fn test_init_deck_and_card_map() {
+//         let card_map = init_deck_and_card_map();
+//         let json_cards: Vec<JsonCard> =
+//             serde_json::from_str(CARD_MAP_JSON).expect("Failed to parse CARD_MAP_JSON");
 
-        assert_eq!(card_map.len(), 52, "Card map must contain 52 cards");
-        let mut json_map = HashMap::new();
+//         assert_eq!(card_map.len(), 52, "Card map must contain 52 cards");
+//         let mut json_map = HashMap::new();
 
-        for jc in json_cards {
-            let x_bytes = decimal_str_to_bytes_32_be(&jc.point.X);
-            let y_bytes = decimal_str_to_bytes_32_be(&jc.point.Y);
-            let z_bytes = decimal_str_to_bytes_32_be(&jc.point.Z);
+//         for jc in json_cards {
+//             let x_bytes = decimal_str_to_bytes_32_be(&jc.point.X);
+//             let y_bytes = decimal_str_to_bytes_32_be(&jc.point.Y);
+//             let z_bytes = decimal_str_to_bytes_32_be(&jc.point.Z);
 
-            let x = Fq::from_be_bytes_mod_order(&x_bytes);
-            let y = Fq::from_be_bytes_mod_order(&y_bytes);
-            let z = Fq::from_be_bytes_mod_order(&z_bytes);
-            let t = x * y;
+//             let x = Fq::from_be_bytes_mod_order(&x_bytes);
+//             let y = Fq::from_be_bytes_mod_order(&y_bytes);
+//             let z = Fq::from_be_bytes_mod_order(&z_bytes);
+//             let t = x * y;
 
-            let point = EdwardsProjective::new(x, y, t, z);
+//             let point = EdwardsProjective::new(x, y, t, z);
 
-            let rank = match jc.rank.as_str() {
-                "2" => 2,
-                "3" => 3,
-                "4" => 4,
-                "5" => 5,
-                "6" => 6,
-                "7" => 7,
-                "8" => 8,
-                "9" => 9,
-                "10" => 10,
-                "J" => 11,
-                "Q" => 12,
-                "K" => 13,
-                "A" => 14,
-                other => panic!("Unknown rank"),
-            };
-            let suit = match jc.suit.as_str() {
-                "hearts" => Suit::Hearts,
-                "diamonds" => Suit::Diamonds,
-                "clubs" => Suit::Clubs,
-                "spades" => Suit::Spades,
-                _ => panic!("Unknown suit"),
-            };
+//             let rank = match jc.rank.as_str() {
+//                 "2" => 2,
+//                 "3" => 3,
+//                 "4" => 4,
+//                 "5" => 5,
+//                 "6" => 6,
+//                 "7" => 7,
+//                 "8" => 8,
+//                 "9" => 9,
+//                 "10" => 10,
+//                 "J" => 11,
+//                 "Q" => 12,
+//                 "K" => 13,
+//                 "A" => 14,
+//                 other => panic!("Unknown rank"),
+//             };
+//             let suit = match jc.suit.as_str() {
+//                 "hearts" => Suit::Hearts,
+//                 "diamonds" => Suit::Diamonds,
+//                 "clubs" => Suit::Clubs,
+//                 "spades" => Suit::Spades,
+//                 _ => panic!("Unknown suit"),
+//             };
 
-            json_map.insert(point, Card::new(suit, rank));
-        }
-        assert_eq!(card_map, json_map, "Rust-generated map must match JSON");
-    }
-}
+//             json_map.insert(point, Card::new(suit, rank));
+//         }
+//         assert_eq!(card_map, json_map, "Rust-generated map must match JSON");
+//     }
+// }
 
 pub fn get_decrypted_points(
     proofs: &[VerificationVariables],

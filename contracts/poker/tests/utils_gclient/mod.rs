@@ -1,6 +1,6 @@
 use crate::{get_state, send_request};
 use gclient::{EventListener, EventProcessor, GearApi, Result};
-use gear_core::ids::{MessageId, ProgramId};
+use gear_core::ids::{ProgramId};
 use poker_client::{traits::*, Card, Config, EncryptedCard, PublicKey, Status, Suit};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
@@ -8,12 +8,14 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
 use ark_ff::{BigInt, PrimeField};
 use num_bigint::BigUint;
+use poker_client::VerificationVariables;
 use sails_rs::collections::HashMap;
 use sails_rs::Decode;
 use zk_loader::{
     get_vkey, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
-    load_player_public_keys, load_player_secret_keys, load_shuffle_proofs,
+    load_player_public_keys, load_player_secret_keys, load_shuffle_proofs, DecryptedCardWithProof,
 };
+
 pub const USERS_STR: &[&str] = &["//John", "//Mike", "//Dan"];
 
 pub trait ApiUtils {
@@ -94,7 +96,6 @@ pub async fn init(
         lobby_name: "Lobby".to_string(),
         small_blind: 5,
         big_blind: 10,
-        number_of_participants: 3,
         starting_bank: 1000,
     };
     let pts_id_bytes: [u8; 32] = pts_program_id.into();
@@ -209,15 +210,15 @@ pub async fn make_zk_actions(
 }
 
 fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
-    let x = Fq::from_be_bytes_mod_order(&coords[0]);
-    let y = Fq::from_be_bytes_mod_order(&coords[1]);
-    let z = Fq::from_be_bytes_mod_order(&coords[2]);
+    let x = Fq::from_le_bytes_mod_order(&coords[0]);
+    let y = Fq::from_le_bytes_mod_order(&coords[1]);
+    let z = Fq::from_le_bytes_mod_order(&coords[2]);
     let t = x * y;
     EdwardsProjective::new(x, y, t, z)
 }
 
-pub fn init_deck_and_card_map() -> HashMap<EdwardsProjective, Card> {
-    let mut points_for_map = vec![vec![]; 3];
+pub fn init_deck_and_card_map() -> (Vec<EdwardsProjective>, HashMap<EdwardsProjective, Card>) {
+    let mut encrypted_deck: Vec<EdwardsProjective> = Vec::with_capacity(52);
 
     let num_cards = 52;
     let base_affine = EdwardsAffine::generator();
@@ -227,25 +228,15 @@ pub fn init_deck_and_card_map() -> HashMap<EdwardsProjective, Card> {
         let scalar = Fr::from(i as u64);
         let point = base_point * scalar;
 
-        // Save point coordinates for map building
-        points_for_map[0].push(point.x.into_bigint());
-        points_for_map[1].push(point.y.into_bigint());
-        points_for_map[2].push(point.z.into_bigint());
+        encrypted_deck.push(point);
     }
 
-    let card_map = build_card_map(points_for_map).expect("Invalid deck format");
-    card_map
+    let card_map = build_card_map(encrypted_deck.clone());
+
+    (encrypted_deck, card_map)
 }
 
-pub fn build_card_map(
-    deck: Vec<Vec<BigInt<4>>>,
-) -> Result<HashMap<EdwardsProjective, Card>, String> {
-    let num_cards = 52;
-
-    if deck.len() != 3 || deck[0].len() != num_cards {
-        return Err("Invalid deck shape".to_string());
-    }
-
+pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective, Card> {
     let mut card_map = HashMap::new();
 
     let suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
@@ -254,13 +245,8 @@ pub fn build_card_map(
     let mut index = 0;
     for suit in &suits {
         for value in values.clone() {
-            let x = Fq::from_bigint(deck[0][index].clone()).expect("invalid x");
-            let y = Fq::from_bigint(deck[1][index].clone()).expect("invalid y");
-            let z = Fq::from_bigint(deck[2][index].clone()).expect("invalid z");
-
-            let point = EdwardsProjective::new(x, y, x * y, z); // t = x * y
             card_map.insert(
-                point,
+                deck[index],
                 Card {
                     suit: suit.clone(),
                     value,
@@ -271,16 +257,36 @@ pub fn build_card_map(
         }
     }
 
-    Ok(card_map)
+    card_map
+}
+
+pub fn build_player_card_disclosure(
+    data: Vec<(PublicKey, Vec<DecryptedCardWithProof>)>,
+    card_map: &HashMap<EdwardsProjective, Card>,
+) -> Vec<(PublicKey, Vec<(Card, VerificationVariables)>)> {
+    let mut result = Vec::new();
+
+    for (pk, decs) in data {
+        let mut verified = Vec::new();
+        for entry in decs {
+            let point = deserialize_bandersnatch_coords(&entry.decrypted);
+            let card =
+                find_card_by_point(card_map, &point).expect("Card not found for decrypted point");
+
+            verified.push((card, entry.proof));
+        }
+        result.push((pk, verified));
+    }
+
+    result
 }
 
 pub fn find_card_by_point(
     card_map: &HashMap<EdwardsProjective, Card>,
     point: &EdwardsProjective,
 ) -> Option<Card> {
-    let affine = point.into_affine();
     card_map.iter().find_map(|(p, card)| {
-        if p.into_affine() == affine {
+        if (point.x * p.z == p.x * point.z) && (point.y * p.z == p.y * point.z) {
             Some(card.clone())
         } else {
             None

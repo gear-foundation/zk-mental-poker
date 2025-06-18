@@ -58,13 +58,11 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     }
 
     pub fn next(&mut self) -> Option<Id> {
-        debug!("NEXT {:?}", self.active_ids);
         if self.active_ids.is_empty() {
             return None;
         }
         let id = self.active_ids[self.turn_index as usize].clone();
         self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
-        debug!("NEXT {:?}", self.turn_index);
         Some(id)
     }
 
@@ -149,7 +147,6 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Some(result_id)
     }
 
-
     pub fn reset_turn_index(&mut self) {
         self.turn_index = 0;
     }
@@ -194,7 +191,7 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
 
         self.active_ids.get(prev_index)
     }
-    
+
     pub fn set(&mut self, round: u64) {
         if self.active_ids.is_empty() || round == 0 {
             return;
@@ -202,7 +199,7 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
 
         self.turn_index = (self.turn_index + round) % self.active_ids.len() as u64;
     }
-    
+
     pub fn clear_all(&mut self) {
         self.active_ids.clear();
         self.turn_index = 0;

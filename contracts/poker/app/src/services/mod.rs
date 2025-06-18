@@ -5,7 +5,7 @@ use sails_rs::prelude::*;
 use utils::*;
 mod curve;
 mod utils;
-mod verify;
+pub mod verify;
 use crate::services::curve::{
     calculate_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
     init_deck_and_card_map, verify_cards,
@@ -96,7 +96,6 @@ pub struct Config {
     lobby_name: String,
     small_blind: u128,
     big_blind: u128,
-    number_of_participants: u16,
     starting_bank: u128,
     time_per_move_ms: u64,
 }
@@ -128,7 +127,6 @@ pub enum Event {
     Registered {
         participant_id: ActorId,
         pk: PublicKey,
-        all_registered: bool,
     },
     PlayerDeleted {
         player_id: ActorId,
@@ -159,7 +157,7 @@ pub enum Event {
     CardsDisclosed,
     GameCanceled,
     WaitingForCardsToBeDisclosed,
-    WaitingForAllTableCardsToBeDisclosed
+    WaitingForAllTableCardsToBeDisclosed,
 }
 
 pub struct PokerService(());
@@ -253,6 +251,10 @@ impl PokerService {
             panic!("Already registered");
         }
 
+        if storage.participants.len() == 9 {
+            panic!("Alerady max amount of players");
+        }
+
         let request = pts_io::Transfer::encode_call(
             msg_src,
             exec::program_id(),
@@ -274,16 +276,10 @@ impl PokerService {
         ));
         storage.active_participants.add(msg_src);
 
-        let mut all_registered = false;
-        if storage.participants.len() == storage.config.number_of_participants as usize {
-            storage.status = Status::WaitingShuffleVerification;
-            all_registered = true;
-        }
         storage.agg_pub_key = calculate_agg_pub_key(storage.agg_pub_key.clone(), pk.clone());
         self.emit_event(Event::Registered {
             participant_id: msg_src,
             pk,
-            all_registered,
         })
         .expect("Event Invocation Error");
     }
@@ -369,11 +365,7 @@ impl PokerService {
             storage.active_participants.add(*id);
         }
 
-        if storage.participants.len() == storage.config.number_of_participants as usize {
-            storage.status = Status::WaitingShuffleVerification;
-        } else {
-            storage.status = Status::Registration;
-        }
+        storage.status = Status::Registration;
 
         self.emit_event(Event::GameRestarted {
             status: storage.status.clone(),
@@ -434,8 +426,7 @@ impl PokerService {
             .await
             .expect("PokerFactory: Error DeleteLobby");
 
-        self.emit_event(Event::Killed)
-            .expect("Notification Error");
+        self.emit_event(Event::Killed).expect("Notification Error");
         exec::exit(storage.factory_actor_id);
     }
 
@@ -472,11 +463,7 @@ impl PokerService {
                 storage.all_in_players = Vec::new();
                 storage.already_invested_in_the_circle = HashMap::new();
 
-                if storage.participants.len() == storage.config.number_of_participants as usize {
-                    storage.status = Status::WaitingShuffleVerification;
-                } else {
-                    storage.status = Status::Registration;
-                }
+                storage.status = Status::Registration;
             }
         }
 
@@ -553,8 +540,11 @@ impl PokerService {
             .verify_batch(instances)
             .await;
 
-        storage.status = Status::WaitingStart;
+        storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
         storage.encrypted_deck = Some(encrypted_deck);
+
+        self.deal_player_cards();
+        self.deal_table_cards(5);
 
         self.emit_event(Event::DeckShuffleComplete)
             .expect("Event Invocation Error");
@@ -567,10 +557,9 @@ impl PokerService {
     /// - wrong status (not WaitingStart)
     ///
     /// Performs:
-    /// 1. Deals cards to players and table
-    /// 2. Processes small/big blinds (handles all-in cases)
-    /// 3. Initializes betting stage
-    /// 4. Updates game status and emits GameStarted event
+    /// 1. Processes small/big blinds (handles all-in cases)
+    /// 2. Initializes betting stage
+    /// 3. Updates game status and emits GameStarted event
     ///
     /// Note: Handles edge cases where players can't cover blinds
     pub async fn start_game(&mut self) {
@@ -579,12 +568,12 @@ impl PokerService {
         if msg_src != storage.config.admin_id {
             panic("Access denied");
         }
-        if storage.status != Status::WaitingStart {
+        if storage.participants.len() < 2 {
+            panic!("Not enough participants");
+        }
+        if storage.status != Status::Registration {
             panic("Wrong status");
         }
-
-        self.deal_player_cards();
-        self.deal_table_cards(5);
 
         storage.active_participants.reset_turn_index();
         storage.active_participants.set(storage.round);
@@ -655,7 +644,7 @@ impl PokerService {
             acted_players: vec![],
         });
 
-        storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
+        storage.status = Status::WaitingShuffleVerification;
         storage.round += 1;
         self.emit_event(Event::GameStarted)
             .expect("Event Invocation Error");
@@ -858,7 +847,10 @@ impl PokerService {
         let number_of_passes = (current_time - last_active_time) / storage.config.time_per_move_ms;
 
         if number_of_passes != 0 {
-            if let Some(next_or_last) = storage.active_participants.skip_and_remove(number_of_passes) {
+            if let Some(next_or_last) = storage
+                .active_participants
+                .skip_and_remove(number_of_passes)
+            {
                 if storage.active_participants.len() <= 1 {
                     let prize = storage.betting_bank.values().sum();
                     participant.balance += prize;
@@ -880,10 +872,10 @@ impl PokerService {
                 panic!("No active players");
             }
         } else if betting.turn != player {
+            sails_rs::gstd::debug!("betting.turn {:?}", betting.turn);
+            sails_rs::gstd::debug!("player {:?}", player);
             panic!("Not your turn!");
         }
-
-
         // Process the player's action
         match action {
             Action::Fold => {
@@ -916,9 +908,11 @@ impl PokerService {
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
+
                 if betting.current_bet != already_invested {
                     panic("cannot check");
                 }
+
                 betting.acted_players.push(player);
             }
             Action::Raise { bet } => {
@@ -1074,13 +1068,11 @@ impl PokerService {
         //     panic!("Wrong status")
         // }
         let player = msg::source();
-        sails_rs::gstd::debug!("PLAYER {:?}", player);
 
         let partially_decrypted_cards = storage
             .partially_decrypted_cards
             .get(&player)
             .expect("Not in game");
-        sails_rs::gstd::debug!("CARD DECRYPT {:?}", partially_decrypted_cards);
 
         verify_cards(
             partially_decrypted_cards,
