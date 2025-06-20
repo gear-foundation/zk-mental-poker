@@ -45,6 +45,7 @@ static mut STORAGE: Option<Storage> = None;
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     LobbyCreated {
         lobby_address: ActorId,
@@ -87,6 +88,7 @@ impl PokerFactoryService {
 }
 
 #[sails_rs::service(events = Event)]
+#[allow(clippy::new_without_default)]
 impl PokerFactoryService {
     pub fn new() -> Self {
         Self(())
@@ -111,7 +113,6 @@ impl PokerFactoryService {
         if msg::value() != 1_000_000_000_000 {
             panic!("Wrong value to create a lobby");
         }
-
 
         if init_lobby.time_per_move_ms < 15_000 {
             panic!("Timer less than 15s");
@@ -179,6 +180,7 @@ impl PokerFactoryService {
     /// Panics if:
     /// - Lobby doesn't exist
     /// - Caller lacks permissions
+    ///
     /// Emits LobbyDeleted event on success.
     pub async fn delete_lobby(&mut self, lobby_address: ActorId) {
         let storage = self.get_mut();

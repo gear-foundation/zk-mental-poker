@@ -170,15 +170,14 @@ impl PokerService {
         vk_shuffle_bytes: VerifyingKeyBytes,
         vk_decrypt_bytes: VerifyingKeyBytes,
     ) -> Self {
-        let mut participants = Vec::new();
-        participants.push((
+        let participants = vec![(
             config.admin_id,
             Participant {
                 name: config.admin_name.clone(),
                 balance: config.starting_bank,
                 pk: pk.clone(),
             },
-        ));
+        )];
         let mut active_participants = TurnManager::new();
         active_participants.add(config.admin_id);
 
@@ -228,11 +227,11 @@ impl PokerService {
 }
 
 #[sails_rs::service(events = Event)]
+#[allow(clippy::new_without_default)]
 impl PokerService {
     pub fn new() -> Self {
         Self(())
     }
-
     /// Registers a player by sending a transfer request to the PTS contract (starting_bank points).
     ///
     /// Panics if:
