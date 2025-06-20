@@ -176,7 +176,7 @@ async function main() {
   // CLIENT-SERVER INTERACTION FLOW FOR ZK SHUFFLE PROTOCOL
   const numCards = 52;
 
-  const numPlayers = 3;
+  const numPlayers = 6;
   const numBits = 64;
   const players = Array.from({ length: numPlayers }, () => keyGen(numBits));
 
@@ -291,7 +291,7 @@ async function main() {
   writeFileSync('output/shuffle_proofs.json', JSON.stringify(shuffleProofsData, null, 2));
   const encryptedDeck = deck.map(row => row.map(v => v.toString()));
 
-writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 2));
+  writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 2));
   // STEP 4: CONTRACT SIDE — decompress deck and distribute cards
 
   // Distribute 2 cards to each player
@@ -300,7 +300,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
   for (let i = 0; i < numPlayers; i++) {
     const hand: CipherCard[] = [];
   
-    for (let j = 0; j < 2; j++) { // 2 карты на игрока
+    for (let j = 0; j < 2; j++) { 
       const cardIndex = i * 2 + j;
   
       const c0: ECPoint = {
@@ -326,356 +326,139 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
 
   // STEP 5: BACKEND SIDE — prepare decryption assignments
 
-  // - Player 1 decrypts cards of Player 2 and Player 3
-  // - Player 2 decrypts cards of Player 1 and Player 3
-  // - Player 3 decrypts cards of Player 1 and Player 2
-
-  // --- DECRYPTION ASSIGNMENTS ---
-  // Player 1 receives cards [0, 1] — and must decrypt cards [2,3] and [4,5] (Player 2 and Player 3)
-  // Player 2 receives cards [2, 3] — and must decrypt cards [0,1] and [4,5] (Player 1 and Player 3)
-  // Player 3 receives cards [4, 5] — and must decrypt cards [0,1] and [2,3] (Player 1 and Player 2)
-  // Each player submits partial decryptions of cards they do not own
-  // Backend aggregates all partial decryptions before final reveal
-
-  let cards1player = playerHands[0];
-  let cards2player = playerHands[1];
-  let cards3player = playerHands[2];
-
-  // partial decks
-  let partialSumDecs1 = [neutral, neutral]
-  let partialSumDecs2 = [neutral, neutral]
-  let partialSumDecs3 = [neutral, neutral]
+  const K = playerHands[0].length; 
 
   const partialDecryptProofs = [];
+  const partialSumDecs = Array(numPlayers).fill(null).map(() => Array(K).fill(neutral));
 
+  for (let i = 0; i < numPlayers; i++) { // Игрок i — decryptor
+    for (let j = 0; j < numPlayers; j++) {
+      if (i === j) continue; // Не расшифровываем свои карты
 
-  // player 1 decrypts for second player and third players
-  for (let i = 0; i < 2; i ++) {
-    // CLIENT SIDE
-    // second player
-    // client generate proof and sends proof, public signal to backend
-    let c0 = cards2player[i].c0;
+      for (let k = 0; k < K; k++) {
+        const c0 = playerHands[j][k].c0;
 
-    let {
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[0].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    );
+        const {
+          dec,
+          proof,
+          publicSignals,
+          isValid
+        } = await generateDecryptProof(
+          c0,
+          players[i].sk,
+          decryptWasmFile,
+          decryptZkeyFile,
+          decryptVkey
+        );
 
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-    
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
+        if (!isValid) {
+          throw new Error(`Invalid proof by player ${i} for card ${k} of player ${j}`);
+        }
 
-    // BACKEND SIDE
-    partialSumDecs2[i] = projectiveAdd(F, a, d, partialSumDecs2[i], dec);
+        partialDecryptProofs.push({
+          proof,
+          publicSignals
+        });
 
-    // CLIENT SIDE
-    // third player
-    c0 = cards3player[i].c0;
-
-    ({
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[0].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    ));
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
-  
-    // TODO: make decrypt circom
-    // client generate proof and sends proof, public signal to backend
-    // BACKEND SIDE
-    partialSumDecs3[i] =  projectiveAdd(F, a, d, partialSumDecs3[i], dec);
-  }
-
-  // // player 2 decrypts for first player and third players
-  for (let i = 0; i < 2; i ++) {
-    // CLIENT SIDE
-    // first player
-
-    let c0 = cards1player[i].c0;
-
-    let {
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[1].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    );
-
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
-
-    // TODO: make decrypt circom
-    // client generate proof and sends proof, public signal to backend
-    // BACKEND SIDE
-    partialSumDecs1[i] = projectiveAdd(F, a, d, partialSumDecs1[i], dec);
-
-    // CLIENT SIDE
-    // third player
-    c0 = cards3player[i].c0;
-    ({
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[1].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    ));
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
-    // TODO: make decrypt circom
-    // client generate proof and sends proof, public signal to backend
-    // BACKEND SIDE
-    partialSumDecs3[i] =  projectiveAdd(F, a, d, partialSumDecs3[i], dec);
-  }
-
-  // player 3 decrypts for first player and second players
-  for (let i = 0; i < 2; i ++) {
-    // CLIENT SIDE
-    // first player
-    let c0 = cards1player[i].c0;
-
-    let {
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[2].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    );
-
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-    
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
- 
-    // client generate proof and sends proof, public signal to backend
-    // BACKEND SIDE
-    partialSumDecs1[i] = projectiveAdd(F, a, d, partialSumDecs1[i], dec);
-
-    // CLIENT SIDE
-    // second player
-    c0 = cards2player[i].c0;
-    ({
-      dec,
-      proof,
-      publicSignals,
-      isValid
-    } = await generateDecryptProof(
-      c0,
-      players[2].sk,
-      decryptWasmFile,
-      decryptZkeyFile,
-      decryptVkey
-    ));
-    partialDecryptProofs.push({
-      proof,
-      publicSignals
-    });
-    if (!isValid) {
-      throw new Error("Invalid decryption proof");
-    }
-    // TODO: make decrypt circom
-    // client generate proof and sends proof, public signal to backend
-    // BACKEND SIDE
-    partialSumDecs2[i] =  projectiveAdd(F, a, d, partialSumDecs2[i], dec);
-  }
-
-  // BACKEND SIDE
-  // for all players backend received all partial decs
-  // backend calculates
-  const partiallyDecCards1 = cards1player.map((card, i) => {
-    return projectiveAdd(F, a, d, card.c1, partialSumDecs1[i]);
-  });
-
-  const partiallyDecCards2 = cards2player.map((card, i) => {
-    return projectiveAdd(F, a, d, card.c1, partialSumDecs2[i]);
-  });
-
-  const partiallyDecCards3 = cards3player.map((card, i) => {
-    return projectiveAdd(F, a, d, card.c1, partialSumDecs3[i]);
-  });
-
-  const partialDecryptions = [];
-
-  partialDecryptions.push({
-    publicKey: {
-      X: players[0].pk.X.toString(),
-      Y: players[0].pk.Y.toString(),
-      Z: players[0].pk.Z.toString(),
-    },
-    cards: cards1player.map((card, i) => ({
-      c0: {
-        X: card.c0.X.toString(),
-        Y: card.c0.Y.toString(),
-        Z: card.c0.Z.toString(),
-      },
-      c1_partial: {
-        X: partiallyDecCards1[i].X.toString(),
-        Y: partiallyDecCards1[i].Y.toString(),
-        Z: partiallyDecCards1[i].Z.toString(),
+        partialSumDecs[j][k] = projectiveAdd(F, a, d, partialSumDecs[j][k], dec);
       }
-    }))
-  });
+    }
+  }
   
-  partialDecryptions.push({
-    publicKey: {
-      X: players[1].pk.X.toString(),
-      Y: players[1].pk.Y.toString(),
-      Z: players[1].pk.Z.toString(),
-    },
-    cards: cards2player.map((card, i) => ({
-      c0: {
-        X: card.c0.X.toString(),
-        Y: card.c0.Y.toString(),
-        Z: card.c0.Z.toString(),
-      },
-      c1_partial: {
-        X: partiallyDecCards2[i].X.toString(),
-        Y: partiallyDecCards2[i].Y.toString(),
-        Z: partiallyDecCards2[i].Z.toString(),
-      }
-    }))
-  });
-  
-  partialDecryptions.push({
-    publicKey: {
-      X: players[2].pk.X.toString(),
-      Y: players[2].pk.Y.toString(),
-      Z: players[2].pk.Z.toString(),
-    },
-    cards: cards3player.map((card, i) => ({
-      c0: {
-        X: card.c0.X.toString(),
-        Y: card.c0.Y.toString(),
-        Z: card.c0.Z.toString(),
-      },
-      c1_partial: {
-        X: partiallyDecCards3[i].X.toString(),
-        Y: partiallyDecCards3[i].Y.toString(),
-        Z: partiallyDecCards3[i].Z.toString(),
-      }
-    }))
-  });
-  
-  writeFileSync(
-    'output/partial_decryptions.json',
-    JSON.stringify(partialDecryptions, null, 2)
-  );
 
   writeFileSync(
     'output/partial_decrypt_proofs.json',
     JSON.stringify(partialDecryptProofs, null, 2)
   );
   // CLIENT SIDE
-  // player1 decrypts his cards
-  const decCards1 = cards1player.map((card, i) => {
-    let {c0, c1} = card;
+  const partiallyDecCardsList = [];
 
-    let skC0 = scalarMul(F, a, d, c0, players[0].sk);
-    let dec = { X: F.neg(skC0.X), Y: skC0.Y, Z: skC0.Z };
-    const c1Partial = partiallyDecCards1[i];
-    return projectiveAdd(F, a, d, c1Partial, dec);
-  });
-
-  decCards1.forEach((pt, i) => {
-    const match = findCardByPoint(F, cardMap, pt);
+  for (let i = 0; i < numPlayers; i++) {
+    const partiallyDecCards = playerHands[i].map((card, k) =>
+      projectiveAdd(F, a, d, card.c1, partialSumDecs[i][k])
+    );
   
-    if (match) {
-      console.log(`Player 1 card ${i + 1}: 🃏 ${match.rank} of ${match.suit}`);
-    } else {
-      console.log(`Player 1 card ${i + 1}: ❓ Unknown card`);
-    }
-  });
-
-  // player2 decrypts his cards
-  const decCards2 = cards2player.map((card, i) => {
-    let {c0, c1} = card;
-    let skC0 = scalarMul(F, a, d, c0, players[1].sk);
-    let dec = { X: F.neg(skC0.X), Y: skC0.Y, Z: skC0.Z };
-    const c1Partial = partiallyDecCards2[i];
-    return projectiveAdd(F, a, d, c1Partial, dec);
-  });
-
-  decCards2.forEach((pt, i) => {
-    const match = findCardByPoint(F, cardMap, pt);
-  
-    if (match) {
-      console.log(`Player 2 card ${i + 1}: 🃏 ${match.rank} of ${match.suit}`);
-    } else {
-      console.log(`Player 2 card ${i + 1}: ❓ Unknown card`);
-    }
-  });
-
-    // player2 decrypts his cards
-    const decCards3 = cards3player.map((card, i) => {
-      let {c0, c1} = card;
-      let skC0 = scalarMul(F, a, d, c0, players[2].sk);
-      let dec = { X: F.neg(skC0.X), Y: skC0.Y, Z: skC0.Z };
-      const c1Partial = partiallyDecCards3[i];
-      return projectiveAdd(F, a, d, c1Partial, dec);
+    partiallyDecCardsList.push({
+      publicKey: {
+        X: players[i].pk.X.toString(),
+        Y: players[i].pk.Y.toString(),
+        Z: players[i].pk.Z.toString(),
+      },
+      cards: playerHands[i].map((card, k) => ({
+        c0: {
+          X: card.c0.X.toString(),
+          Y: card.c0.Y.toString(),
+          Z: card.c0.Z.toString(),
+        },
+        c1_partial: {
+          X: partiallyDecCards[k].X.toString(),
+          Y: partiallyDecCards[k].Y.toString(),
+          Z: partiallyDecCards[k].Z.toString(),
+        }
+      }))
     });
+  }
+  
+  const playerDecryptions = [];
 
-    decCards3.forEach((pt, i) => {
-      const match = findCardByPoint(F, cardMap, pt);
+  for (let i = 0; i < players.length; i++) {
+    const decryptedCardsWithProofs = [];
+    const sk = players[i].sk;
+    const pk = players[i].pk;
+    const hand = playerHands[i];
+    const c1_partials = partiallyDecCardsList[i].cards.map(card => ({
+      X: BigInt(card.c1_partial.X),
+      Y: BigInt(card.c1_partial.Y),
+      Z: BigInt(card.c1_partial.Z)
+    }));
+
+    for (let k = 0; k < 2; k ++) {
+      const c0 = hand[k].c0;
+      const {
+        dec,
+        proof,
+        publicSignals,
+        isValid
+      } = await generateDecryptProof(
+        c0,
+        sk,
+        decryptWasmFile,
+        decryptZkeyFile,
+        decryptVkey
+      );
+      let decCard = projectiveAdd(F, a, d, c1_partials[k], dec);
+      const match = findCardByPoint(F, cardMap, decCard);
+      const label = `Player ${i + 1} card ${k + 1}`;
       if (match) {
-        console.log(`Player 3 card ${i + 1}: 🃏 ${match.rank} of ${match.suit}`);
+        console.log(`${label}: 🃏 ${match.rank} of ${match.suit}`);
       } else {
-        console.log(`Player 3 card ${i + 1}: ❓ Unknown card`);
+        console.log(`${label}: ❓ Unknown card`);
       }
+      decryptedCardsWithProofs.push({
+        decrypted: {
+          X: decCard.X.toString(),
+          Y: decCard.Y.toString(),
+          Z: decCard.Z.toString()
+        },
+        proof,
+        publicSignals
+      });
+    }
+    console.log("amount of cards", decryptedCardsWithProofs.length)
+    playerDecryptions.push({
+      publicKey: {
+        X: pk.X.toString(),
+        Y: pk.Y.toString(),
+        Z: pk.Z.toString()
+      },
+      cards: decryptedCardsWithProofs
     });
+  }
+  
+  writeFileSync(
+    "output/player_decryptions.json",
+    JSON.stringify(playerDecryptions, null, 2)
+  );
 
     const usedCards = numPlayers * 2;
 
@@ -699,7 +482,6 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
       tableCards.push({ c0, c1 });
     }
 
-    // Players decrypt 3 cards
     const playerDecryptionsData = [];
 
     const partialSumDecsTable: ECPoint[] = [];
@@ -770,8 +552,7 @@ writeFileSync('output/encrypted_deck.json', JSON.stringify(encryptedDeck, null, 
         decryptions
       });
     }
-    writeFileSync("output/table_decryptions_after_preflop.json", JSON.stringify(playerDecryptionsData, null, 2));
-
+    writeFileSync("output/table_decryptions.json", JSON.stringify(playerDecryptionsData, null, 2));
 
   }
 
