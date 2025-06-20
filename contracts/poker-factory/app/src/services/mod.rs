@@ -109,6 +109,11 @@ impl PokerFactoryService {
         let storage = self.get_mut();
         let msg_src = msg::source();
 
+        if msg::value() != 1_000_000_000_000 {
+            panic!("Wrong value to create a lobby");
+        }
+
+
         if init_lobby.time_per_move_ms < 15_000 {
             panic!("Timer less than 15s");
         }
