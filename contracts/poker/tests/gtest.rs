@@ -454,12 +454,12 @@ async fn gtest_basic_workflow() {
         .recv(program_id)
         .await
         .unwrap();
-    if let Status::Finished {
-        winners,
-        cash_prize,
-    } = result
-    {
-        for (winner, prize) in winners.iter().zip(cash_prize) {
+    if let Status::Finished { pots } = result {
+        assert_eq!(pots.len(), 1);
+
+        let prize = pots[0].0;
+        let winners = pots[0].1.clone();
+        for winner in winners.iter() {
             participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
@@ -742,12 +742,10 @@ async fn gtest_check_null_balance() {
         .unwrap();
     assert_eq!(participants.len(), 2);
 
-    if let Status::Finished {
-        winners,
-        cash_prize,
-    } = result
-    {
-        for (winner, prize) in winners.iter().zip(cash_prize) {
+    if let Status::Finished { pots } = result {
+        let prize = pots[0].0;
+        let winners = pots[0].1.clone();
+        for winner in winners.iter() {
             participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != prize {
@@ -1256,12 +1254,10 @@ async fn gtest_one_player_left() {
         .recv(program_id)
         .await
         .unwrap();
-    if let Status::Finished {
-        winners,
-        cash_prize,
-    } = result
-    {
-        for (winner, prize) in winners.iter().zip(cash_prize) {
+    if let Status::Finished { pots } = result {
+        let prize = pots[0].0;
+        let winners = pots[0].1.clone();
+        for winner in winners.iter() {
             participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
