@@ -5,7 +5,7 @@ on:
     branches: [master]
   push:
     branches: [master]
-    
+
 defaults:
   run:
     working-directory: contracts
@@ -50,8 +50,8 @@ jobs:
     - name: Prepare artifacts directory
       run: |
         mkdir -p artifacts
-        cp target/wasm32-gear/release/*.wasm artifacts/
-        cp target/wasm32-gear/release/*.idl artifacts/
+        cp contracts/target/wasm32-gear/release/*.wasm artifacts/
+        cp contracts/target/wasm32-gear/release/*.idl artifacts/
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
