@@ -1,20 +1,16 @@
-use crate::{get_state, send_request};
+use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
-use gear_core::ids::{ProgramId};
-use poker_client::{traits::*, Card, Config, EncryptedCard, PublicKey, Status, Suit};
+use gear_core::ids::ProgramId;
+use poker_client::{traits::*, Card, Config, PublicKey, Suit};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
-use ark_ff::{BigInt, PrimeField};
-use num_bigint::BigUint;
+use ark_ff::PrimeField;
 use poker_client::VerificationVariables;
 use sails_rs::collections::HashMap;
 use sails_rs::Decode;
-use zk_loader::{
-    get_vkey, load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
-    load_player_public_keys, load_player_secret_keys, load_shuffle_proofs, DecryptedCardWithProof,
-};
+use zk_loader::{DecryptedCardWithProof, ZkLoaderData};
 
 pub const USERS_STR: &[&str] = &["//John", "//Mike", "//Dan"];
 
@@ -100,8 +96,8 @@ pub async fn init(
     };
     let pts_id_bytes: [u8; 32] = pts_program_id.into();
     let pts_id: ActorId = pts_id_bytes.into();
-    let shuffle_vkey = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
     let constructor = (config, pts_id, pk, shuffle_vkey, decrypt_vkey);
     let request = ["New".encode(), constructor.encode()].concat();
 
@@ -135,19 +131,18 @@ pub async fn init(
 pub async fn make_zk_actions(
     api: &GearApi,
     listener: &mut EventListener,
-) -> Result<(ProgramId, Vec<(PublicKey, Fr, ActorId, &'static str)>)> {
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-    let sks = load_player_secret_keys("tests/test_data/player_sks.json");
-    let proofs = load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
+) -> Result<(ProgramId, Vec<(PublicKey, ActorId, &'static str)>)> {
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
+    let deck = ZkLoaderData::load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
 
-    let decrypt_proofs = load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
-    let pk_cards = load_partial_decryptions("tests/test_data/partial_decryptions.json");
+    let decrypt_proofs =
+        ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
+    let mut pk_to_actor_id: Vec<(PublicKey, ActorId, &str)> = vec![];
     let api = get_new_client(&api, USERS_STR[0]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
+    pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
 
     // Init
     let (pts_id, program_id) = init(&api, pks[0].1.clone(), listener).await?;
@@ -157,7 +152,7 @@ pub async fn make_zk_actions(
     let mut player_name = "Alice".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
+    pk_to_actor_id.push((pks[1].1.clone(), id, USERS_STR[1]));
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -167,7 +162,7 @@ pub async fn make_zk_actions(
     player_name = "Bob".to_string();
     let api = get_new_client(&api, USERS_STR[2]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[2].1.clone(), sks[2].1.clone(), id, USERS_STR[2]));
+    pk_to_actor_id.push((pks[2].1.clone(), id, USERS_STR[2]));
 
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
@@ -188,19 +183,6 @@ pub async fn make_zk_actions(
         .expect("Unable to change signer.");
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
-
-    // Verify partial decryptions
-    let cards_by_actor: Vec<(ActorId, [EncryptedCard; 2])> = pk_cards
-        .into_iter()
-        .map(|(pk, cards)| {
-            let id = pk_to_actor_id
-                .iter()
-                .find(|(pk1, _, _, _)| pk1 == &pk)
-                .map(|(_, _, id, _)| *id)
-                .expect("PublicKey not found");
-            (id, cards)
-        })
-        .collect();
 
     println!("DECRYPT");
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));

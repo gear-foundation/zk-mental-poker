@@ -1,26 +1,17 @@
 use std::{thread::sleep, time};
 
-use ark_ec::CurveGroup;
 use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
-use crate::zk_loader::{
-    get_vkey, load_cards_with_proofs, load_player_public_keys, load_table_cards_proofs,
-};
-use ark_ed_on_bls12_381_bandersnatch::Fr;
-use crate::zk_loader::{
-    load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
-    load_shuffle_proofs,
-};
+use crate::zk_loader::ZkLoaderData;
 use crate::{build_player_card_disclosure, init_deck_and_card_map};
 
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
-use poker_client::EncryptedCard;
 use poker_client::PublicKey;
-use poker_client::{Action, BettingStage, Card, Participant, Stage, Status, Suit};
+use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
 
 use std::fs;
@@ -50,7 +41,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
             fs::read("../target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
         CodeId::generate(code.as_ref())
     };
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
 
     // PTS
     let path = "../target/wasm32-gear/release/pts.opt.wasm";
@@ -77,8 +68,8 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let pts_id: ActorId = pts_id_bytes.into();
     println!("pts_program_id {:?}", pts_program_id);
 
-    let shuffle_vkey = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
     // Factory
 
@@ -217,9 +208,10 @@ async fn test_basic_workflow() -> Result<()> {
 
     // decrypt table cards (first 3 cards)
     println!("decrypt 3 cards after preflop");
-    let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+        "tests/test_data/table_decryptions_after_preflop.json",
+    );
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -278,7 +270,7 @@ async fn test_basic_workflow() -> Result<()> {
 
     // decrypt table cards (4th card)
     println!("decrypt 1 card after flop");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -307,7 +299,7 @@ async fn test_basic_workflow() -> Result<()> {
     );
 
     println!("decrypt 1 card after turn");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -333,16 +325,17 @@ async fn test_basic_workflow() -> Result<()> {
 
     println!("Players reveal their cards..");
 
-    let player_cards = load_cards_with_proofs("tests/test_data/player_decryptions.json");
+    let player_cards =
+        ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
 
     let (_, card_map) = init_deck_and_card_map();
 
     let hands = build_player_card_disclosure(player_cards, &card_map);
 
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((pk, instances)) = entry {
+        if let Some((_pk, instances)) = entry {
             let api = api.clone().with(name).expect("Unable to change signer.");
             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
             assert!(listener.message_processed(message_id).await?.succeed());
@@ -445,11 +438,6 @@ async fn test_time_limit() -> Result<()> {
 
 #[tokio::test]
 async fn test_registration() -> Result<()> {
-    use crate::zk_loader::{
-        load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
-        load_player_secret_keys, load_shuffle_proofs,
-    };
-    use ark_ed_on_bls12_381_bandersnatch::Fr;
     use poker_client::PublicKey;
 
     let api = GearApi::dev().await?;
@@ -457,23 +445,22 @@ async fn test_registration() -> Result<()> {
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
 
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-    let sks = load_player_secret_keys("tests/test_data/player_sks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
+    let mut pk_to_actor_id: Vec<(PublicKey, ActorId, &str)> = vec![];
     let api = get_new_client(&api, USERS_STR[0]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
+    pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
 
     // Init
     let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
 
     // Resgiter
     println!("REGISTER");
-    let mut player_name = "Alice".to_string();
+    let player_name = "Alice".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
     let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
+    pk_to_actor_id.push((pks[1].1.clone(), id, USERS_STR[1]));
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -492,35 +479,22 @@ async fn test_registration() -> Result<()> {
 
 #[tokio::test]
 async fn test_delete_player() -> Result<()> {
-    use crate::zk_loader::{
-        load_encrypted_table_cards, load_partial_decrypt_proofs, load_partial_decryptions,
-        load_player_secret_keys, load_shuffle_proofs,
-    };
-    use ark_ed_on_bls12_381_bandersnatch::Fr;
-    use poker_client::PublicKey;
-
     let api = GearApi::dev().await?;
 
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
 
-    let pks = load_player_public_keys("tests/test_data/player_pks.json");
-    let sks = load_player_secret_keys("tests/test_data/player_sks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &str)> = vec![];
     let api = get_new_client(&api, USERS_STR[0]).await;
-    let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[0].1.clone(), sks[0].1.clone(), id, USERS_STR[0]));
 
     // Init
     let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
 
     // Resgiter
     println!("REGISTER");
-    let mut player_name = "Alice".to_string();
+    let player_name = "Alice".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
-    let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[1].1.clone(), sks[1].1.clone(), id, USERS_STR[1]));
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
@@ -589,9 +563,10 @@ async fn test_all_in_case_1() -> Result<()> {
     assert_eq!(participants[1].1.balance, 0);
     assert_eq!(participants[2].1.balance, 0);
 
-    let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+        "tests/test_data/table_decryptions_after_preflop.json",
+    );
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -690,9 +665,10 @@ async fn test_all_in_case_2() -> Result<()> {
 
     // decrypt table cards (first 3 cards)
     println!("decrypt 3 cards after preflop");
-    let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+        "tests/test_data/table_decryptions_after_preflop.json",
+    );
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -743,9 +719,10 @@ async fn test_all_in_case_2() -> Result<()> {
     assert_eq!(participants[1].1.balance, 0);
     assert_eq!(participants[2].1.balance, 0);
 
-    let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data/table_decryptions_after_preflop.json");
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+        "tests/test_data/table_decryptions_after_preflop.json",
+    );
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = table_cards_proofs
             .iter()
             .find(|(stored_pk, _)| stored_pk == pk);
@@ -790,7 +767,7 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
 
-    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
 
     let api_0 = api
         .clone()
@@ -833,10 +810,10 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "RestartGame", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let proofs = load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
-    let decrypt_proofs = load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
-    let pk_cards = load_partial_decryptions("tests/test_data/partial_decryptions.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
+    let deck = ZkLoaderData::load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
+    let decrypt_proofs =
+        ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
 
     // Shuffle deck
     println!("SHUFFLE");
@@ -847,19 +824,6 @@ async fn test_restart_and_all_in_case() -> Result<()> {
     println!("START");
     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
-
-    // Verify partial decryptions
-    let cards_by_actor: Vec<(ActorId, [EncryptedCard; 2])> = pk_cards
-        .into_iter()
-        .map(|(pk, cards)| {
-            let id = pk_to_actor_id
-                .iter()
-                .find(|(pk1, _, _, _)| pk1 == &pk)
-                .map(|(_, _, id, _)| *id)
-                .expect("PublicKey not found");
-            (id, cards)
-        })
-        .collect();
 
     println!("DECRYPT");
     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));
@@ -909,16 +873,13 @@ async fn test_cancel_game() -> Result<()> {
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
 
-    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
 
     let api_0 = api
         .clone()
         .with(USERS_STR[0])
         .expect("Unable to change signer.");
-    let api_1 = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
+
     let api_2 = api
         .clone()
         .with(USERS_STR[2])
@@ -948,18 +909,19 @@ async fn reveal_player_cards(
     program_id: ProgramId,
     api: &GearApi,
     listener: &mut EventListener,
-    pk_to_actor_id: Vec<(PublicKey, Fr, ActorId, &'static str)>,
+    pk_to_actor_id: Vec<(PublicKey, ActorId, &'static str)>,
 ) -> Result<()> {
-    let player_cards = load_cards_with_proofs("tests/test_data/player_decryptions.json");
+    let player_cards =
+        ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
 
     let (_, card_map) = init_deck_and_card_map();
 
     let hands = build_player_card_disclosure(player_cards, &card_map);
 
-    for (pk, _, _, name) in pk_to_actor_id.iter() {
+    for (pk, _, name) in pk_to_actor_id.iter() {
         let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((pk, instances)) = entry {
+        if let Some((_pk, instances)) = entry {
             let api = api.clone().with(name).expect("Unable to change signer.");
             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
             assert!(listener.message_processed(message_id).await?.succeed());

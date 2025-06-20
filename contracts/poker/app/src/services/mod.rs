@@ -773,11 +773,7 @@ impl PokerService {
                     .get(encrypted_card)
                     .expect("Decryptions must exist for this card");
 
-                let partials = by_card
-                    .partials
-                    .iter()
-                    .map(|pd| pd.clone())
-                    .collect::<Vec<_>>();
+                let partials = by_card.partials.to_vec();
 
                 if let Some(card) =
                     decrypt_point(&storage.original_card_map, encrypted_card, partials)
@@ -977,7 +973,7 @@ impl PokerService {
             let winner = if storage.active_participants.is_empty() {
                 storage
                     .all_in_players
-                    .get(0)
+                    .first()
                     .expect("The player must exist")
             } else {
                 storage

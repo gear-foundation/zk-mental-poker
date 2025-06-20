@@ -159,8 +159,8 @@ pub fn decrypt_point(
     partial_decryptions: Vec<[Vec<u8>; 3]>,
 ) -> Option<Card> {
     let mut sum = deserialize_bandersnatch_coords(&partial_decryptions[0]);
-    for i in 1..partial_decryptions.len() {
-        sum = sum + deserialize_bandersnatch_coords(&partial_decryptions[i]);
+    for partial in partial_decryptions.iter().skip(1) {
+        sum += deserialize_bandersnatch_coords(partial);
     }
     let c1_point = deserialize_bandersnatch_coords(&encrypted_point.c1);
     let decrypted_point = c1_point + sum;
@@ -485,7 +485,6 @@ fn sum_partial_decryptions(partials: &[[Vec<u8>; 3]]) -> EdwardsProjective {
         .iter()
         .fold(EdwardsProjective::zero(), |acc, coord| {
             let p = deserialize_bandersnatch_coords(coord);
-            let sum = acc + p;
-            sum
+            acc + p
         })
 }
