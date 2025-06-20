@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use gstd::{debug, ext, format};
+use gstd::{ext, format};
 use sails_rs::collections::HashMap;
 use sails_rs::collections::HashSet;
 use sails_rs::prelude::*;
@@ -66,44 +66,6 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Some(id)
     }
 
-    // pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
-    //     let len = self.active_ids.len();
-    //     if len == 0 || n == 0 {
-    //         return None;
-    //     }
-
-    //     let mut idx = if self.turn_index == 0 {
-    //         self.active_ids.len() - 1
-    //     } else {
-    //         (self.turn_index - 1) as usize
-    //     };
-
-    //     for _ in 0..n {
-    //         if self.active_ids.is_empty() {
-    //             return None;
-    //         }
-
-    //         self.active_ids.remove(idx);
-    //         if idx >= self.active_ids.len() {
-    //             idx = 0;
-    //         }
-
-    //         if self.turn_index as usize > idx {
-    //             self.turn_index -= 1;
-    //         } else if self.turn_index as usize == idx && self.turn_index > 0 {
-    //             self.turn_index -= 1;
-    //         }
-    //     }
-
-    //     if self.active_ids.is_empty() {
-    //         None
-    //     } else {
-    //         let id = Some(self.active_ids[self.turn_index as usize].clone());
-    //         self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
-    //         id
-    //     }
-    // }
-
     pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
         if self.active_ids.is_empty() || n == 0 {
             return None;
@@ -129,9 +91,9 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
             let removed = self.active_ids.remove(idx);
             last_removed = Some(removed.clone());
 
-            if self.turn_index as usize > idx {
-                self.turn_index -= 1;
-            } else if self.turn_index as usize == idx && self.turn_index > 0 {
+            if (self.turn_index as usize > idx)
+                || (self.turn_index as usize == idx && self.turn_index > 0)
+            {
                 self.turn_index -= 1;
             }
         }

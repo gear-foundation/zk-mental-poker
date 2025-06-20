@@ -773,11 +773,7 @@ impl PokerService {
                     .get(encrypted_card)
                     .expect("Decryptions must exist for this card");
 
-                let partials = by_card
-                    .partials
-                    .iter()
-                    .map(|pd| pd.clone())
-                    .collect::<Vec<_>>();
+                let partials = by_card.partials.to_vec();
 
                 if let Some(card) =
                     decrypt_point(&storage.original_card_map, encrypted_card, partials)
@@ -978,7 +974,7 @@ impl PokerService {
             let winner = if storage.active_participants.is_empty() {
                 storage
                     .all_in_players
-                    .get(0)
+                    .first()
                     .expect("The player must exist")
             } else {
                 storage
@@ -1024,7 +1020,10 @@ impl PokerService {
             } else {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
-                betting.turn = storage.active_participants.next().expect("There is no next one");
+                betting.turn = storage
+                    .active_participants
+                    .next()
+                    .expect("There is no next one");
                 betting.last_active_time = None;
                 betting.acted_players.clear();
                 betting.current_bet = 0;
@@ -1119,7 +1118,7 @@ impl PokerService {
                     .find(|(id, _)| id == winner)
                     .expect("There is no such participant");
                 participant.balance += prize;
-            }    
+            }
             storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
                 winners: winners.clone(),

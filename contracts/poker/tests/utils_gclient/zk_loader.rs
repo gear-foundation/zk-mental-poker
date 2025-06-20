@@ -2,8 +2,8 @@ use ark_bls12_381::Bls12_381;
 use ark_bls12_381::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{BigInteger, Field, PrimeField};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 use num_bigint::BigUint;
 use num_traits::Num;
 use poker_client::{
@@ -13,36 +13,35 @@ use serde::Deserialize;
 use std::fs;
 use std::ops::Neg;
 use std::str::FromStr;
+
+// === Constants ===
+const FIELD_ELEMENT_SIZE: usize = 32;
+const G1_UNCOMPRESSED_SIZE: usize = 96;
+const EXPECTED_DECK_ROWS: usize = 6;
+const DECK_SIZE: usize = 52;
+
+// === Data Structures ===
 #[derive(Debug, Deserialize)]
 struct PlayerDecryptions {
-    playerPubKey: ECPointJson,
+    #[serde(rename = "playerPubKey")]
+    player_pub_key: ECPointJson,
     decryptions: Vec<Decryption>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Decryption {
-    encryptedCard: EncryptedCardJson,
+    #[serde(rename = "encryptedCard")]
+    encrypted_card: EncryptedCardJson,
     dec: ECPointJson,
     proof: ProofJson,
-    publicSignals: Vec<String>,
+    #[serde(rename = "publicSignals")]
+    public_signals: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct EncryptedCardJson {
     c0: ECPointJson,
     c1: ECPointJson,
-}
-
-#[derive(Debug, Deserialize)]
-struct PartialDecryptionCard {
-    c0: ECPointJson,
-    c1_partial: ECPointJson,
-}
-
-#[derive(Debug, Deserialize)]
-struct PartialDecryptionEntry {
-    publicKey: ECPointJson,
-    cards: Vec<PartialDecryptionCard>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +60,16 @@ struct ECPointJson {
     z: String,
 }
 
+impl From<ECPointJson> for [Vec<u8>; 3] {
+    fn from(p: ECPointJson) -> Self {
+        [
+            decimal_string_to_bytes(&p.x),
+            decimal_string_to_bytes(&p.y),
+            decimal_string_to_bytes(&p.z),
+        ]
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ProofJson {
     pi_a: Vec<String>,
@@ -71,301 +80,8 @@ struct ProofJson {
 #[derive(Deserialize)]
 struct BatchProofEntry {
     proof: ProofJson,
-    publicSignals: Vec<String>,
-}
-
-pub fn load_player_public_keys(path: &str) -> Vec<(usize, PublicKey)> {
-    let raw = fs::read_to_string(path).expect("failed to read player_pks.json");
-    let json: Vec<PublicKeyJson> = serde_json::from_str(&raw).expect("invalid JSON");
-
-    json.into_iter()
-        .map(|pk| {
-            (
-                pk.index,
-                PublicKey {
-                    x: decimal_str_to_bytes_32(&pk.pk.x),
-                    y: decimal_str_to_bytes_32(&pk.pk.y),
-                    z: decimal_str_to_bytes_32(&pk.pk.z),
-                },
-            )
-        })
-        .collect()
-}
-
-#[derive(Debug, Deserialize)]
-struct SecretKeyJson {
-    index: usize,
-    sk: String,
-}
-
-pub fn load_player_secret_keys(path: &str) -> Vec<(usize, ark_ed_on_bls12_381_bandersnatch::Fr)> {
-    let raw = fs::read_to_string(path).expect("failed to read player_sks.json");
-    let json: Vec<SecretKeyJson> = serde_json::from_str(&raw).expect("invalid JSON");
-
-    json.into_iter()
-        .map(|entry| {
-            let sk_biguint = BigUint::from_str(&entry.sk).expect("invalid bigint string");
-            let sk_bytes = sk_biguint.to_bytes_le();
-            let sk_fr = ark_ed_on_bls12_381_bandersnatch::Fr::from_le_bytes_mod_order(&sk_bytes);
-            (entry.index, sk_fr)
-        })
-        .collect()
-}
-pub fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
-    let n = BigUint::from_str_radix(s, 10).expect("invalid decimal");
-    let b = n.to_bytes_be();
-    if b.len() > 32 {
-        panic!("too large for 32 bytes");
-    }
-    let mut buf = [0u8; 32];
-    buf[32 - b.len()..].copy_from_slice(&b);
-    buf.reverse();
-    buf
-}
-
-pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
-    let content = std::fs::read_to_string(path).expect("Cannot read partial_decrypt_proofs.json");
-    let parsed: Vec<BatchProofEntry> = serde_json::from_str(&content).expect("invalid JSON");
-
-    parsed
-        .into_iter()
-        .map(|entry| {
-            let proof = Proof {
-                a: deserialize_g1(&entry.proof.pi_a),
-                b: deserialize_g2(&entry.proof.pi_b).unwrap(),
-                c: deserialize_g1(&entry.proof.pi_c),
-            };
-
-            let public_inputs = parse_public_signals(&entry.publicSignals);
-
-            VerificationVariables {
-                proof_bytes: encode_proof(&proof),
-                public_input: encode_inputs(&public_inputs),
-            }
-        })
-        .collect()
-}
-
-pub fn load_table_cards_proofs(
-    path: &str,
-) -> Vec<(
-    PublicKey,
-    (
-        Vec<(EncryptedCard, [Vec<u8>; 3])>,
-        Vec<VerificationVariables>,
-    ),
-)> {
-    let raw = fs::read_to_string(path).expect("Failed to read JSON file");
-    let parsed: Vec<PlayerDecryptions> = serde_json::from_str(&raw).expect("Invalid JSON");
-
-    let mut result = Vec::new();
-
-    for entry in parsed {
-        let player_key = PublicKey {
-            x: decimal_str_to_bytes_32(&entry.playerPubKey.x),
-            y: decimal_str_to_bytes_32(&entry.playerPubKey.y),
-            z: decimal_str_to_bytes_32(&entry.playerPubKey.z),
-        };
-        let mut decryptions = Vec::new();
-        let mut proofs = Vec::new();
-        for dec in entry.decryptions {
-            // Prepare encrypted card
-            let card = EncryptedCard {
-                c0: [
-                    from_decimal_string(&dec.encryptedCard.c0.x),
-                    from_decimal_string(&dec.encryptedCard.c0.y),
-                    from_decimal_string(&dec.encryptedCard.c0.z),
-                ],
-                c1: [
-                    from_decimal_string(&dec.encryptedCard.c1.x),
-                    from_decimal_string(&dec.encryptedCard.c1.y),
-                    from_decimal_string(&dec.encryptedCard.c1.z),
-                ],
-            };
-
-            let proof = Proof {
-                a: deserialize_g1(&dec.proof.pi_a),
-                b: deserialize_g2(&dec.proof.pi_b).expect("Invalid pi_b"),
-                c: deserialize_g1(&dec.proof.pi_c),
-            };
-
-            let public_inputs = parse_public_signals(&dec.publicSignals);
-
-            let dec = [
-                from_decimal_string(&dec.dec.x),
-                from_decimal_string(&dec.dec.y),
-                from_decimal_string(&dec.dec.z),
-            ];
-
-            proofs.push(VerificationVariables {
-                proof_bytes: encode_proof(&proof),
-                public_input: encode_inputs(&public_inputs),
-            });
-
-            decryptions.push((card, dec));
-        }
-        result.push((player_key, (decryptions, proofs)));
-    }
-
-    result
-}
-
-pub fn get_vkey(path: &str) -> VerifyingKeyBytes {
-    let json = fs::read_to_string(path).unwrap();
-    let vkey: VKey = serde_json::from_str(&json).unwrap();
-    let alpha = deserialize_g1(&vkey.vk_alpha_1);
-    let mut buf = Vec::new();
-    alpha.serialize_compressed(&mut buf).unwrap();
-
-    let beta = deserialize_g2(&(vkey.vk_beta_2.to_vec())).unwrap();
-    let gamma = deserialize_g2(&vkey.vk_gamma_2).unwrap();
-    let delta = deserialize_g2(&vkey.vk_delta_2).unwrap();
-
-    // IC: Vec<G1Affine> from [String; 3]
-    let ic_points: Vec<G1Affine> = vkey.IC.iter().map(|p| deserialize_g1(p)).collect();
-
-    // pairing(alpha, beta)
-    let alpha_g1_beta_g2 = Bls12_381::pairing(alpha, beta).0;
-
-    let mut alpha_beta_bytes = Vec::new();
-    alpha_g1_beta_g2
-        .serialize_uncompressed(&mut alpha_beta_bytes)
-        .unwrap();
-
-    let gamma_g2_neg_pc = gamma.into_group().neg().into_affine();
-    let delta_g2_neg_pc = delta.into_group().neg().into_affine();
-
-    let mut gamma_neg_bytes = Vec::new();
-    gamma_g2_neg_pc
-        .serialize_uncompressed(&mut gamma_neg_bytes)
-        .unwrap();
-
-    let mut delta_neg_bytes = Vec::new();
-    delta_g2_neg_pc
-        .serialize_uncompressed(&mut delta_neg_bytes)
-        .unwrap();
-
-    let mut ic_uncompressed: Vec<Vec<u8>> = vec![];
-
-    for ic in ic_points.clone() {
-        let mut buf = Vec::new();
-        ic.serialize_uncompressed(&mut buf).unwrap();
-        assert_eq!(buf.len(), 96);
-        ic_uncompressed.push(buf);
-    }
-    VerifyingKeyBytes {
-        alpha_g1_beta_g2: alpha_beta_bytes,
-        gamma_g2_neg_pc: gamma_neg_bytes,
-        delta_g2_neg_pc: delta_neg_bytes,
-        ic: ic_uncompressed,
-    }
-}
-pub fn load_partial_decryptions(path: &str) -> Vec<(PublicKey, [EncryptedCard; 2])> {
-    let raw = fs::read_to_string(path).expect("failed to read partial_decryptions.json");
-    let json: Vec<PartialDecryptionEntry> = serde_json::from_str(&raw).expect("invalid JSON");
-
-    json.into_iter()
-        .map(|entry| {
-            let pk = PublicKey {
-                x: decimal_str_to_bytes_32(&entry.publicKey.x),
-                y: decimal_str_to_bytes_32(&entry.publicKey.y),
-                z: decimal_str_to_bytes_32(&entry.publicKey.z),
-            };
-
-            if entry.cards.len() != 2 {
-                panic!("Expected exactly 2 cards per player");
-            }
-
-            let encrypted_cards = [
-                EncryptedCard {
-                    c0: [
-                        from_decimal_string(&entry.cards[0].c0.x),
-                        from_decimal_string(&entry.cards[0].c0.y),
-                        from_decimal_string(&entry.cards[0].c0.z),
-                    ],
-                    c1: [
-                        from_decimal_string(&entry.cards[0].c1_partial.x),
-                        from_decimal_string(&entry.cards[0].c1_partial.y),
-                        from_decimal_string(&entry.cards[0].c1_partial.z),
-                    ],
-                },
-                EncryptedCard {
-                    c0: [
-                        from_decimal_string(&entry.cards[1].c0.x),
-                        from_decimal_string(&entry.cards[1].c0.y),
-                        from_decimal_string(&entry.cards[1].c0.z),
-                    ],
-                    c1: [
-                        from_decimal_string(&entry.cards[1].c1_partial.x),
-                        from_decimal_string(&entry.cards[1].c1_partial.y),
-                        from_decimal_string(&entry.cards[1].c1_partial.z),
-                    ],
-                },
-            ];
-
-            (pk, encrypted_cards)
-        })
-        .collect()
-}
-
-pub fn load_shuffle_proofs(path: &str) -> Vec<VerificationVariables> {
-    let content = fs::read_to_string(path).expect("cannot read shuffle_proofs.json");
-    let parsed: Vec<BatchProofEntry> = serde_json::from_str(&content).expect("invalid JSON");
-
-    parsed
-        .into_iter()
-        .map(|entry| {
-            let proof = Proof {
-                a: deserialize_g1(&entry.proof.pi_a),
-                b: deserialize_g2(&entry.proof.pi_b).unwrap(),
-                c: deserialize_g1(&entry.proof.pi_c),
-            };
-
-            let public_inputs = parse_public_signals(&entry.publicSignals);
-
-            VerificationVariables {
-                proof_bytes: encode_proof(&proof),
-                public_input: encode_inputs(&public_inputs),
-            }
-        })
-        .collect()
-}
-
-pub fn load_encrypted_table_cards(path: &str) -> Vec<EncryptedCard> {
-    let raw = fs::read_to_string(path).expect("failed to read encrypted_deck.json");
-    let json: Vec<Vec<String>> = serde_json::from_str(&raw).expect("invalid JSON");
-
-    if json.len() != 6 {
-        panic!("Expected 6 rows for encrypted deck");
-    }
-
-    // Предполагаем, что первые 5 карт в деке — это карты на стол
-    let num_table_cards = 52;
-    let mut table_cards = Vec::with_capacity(num_table_cards);
-
-    for i in 0..num_table_cards {
-        let c0 = [
-            from_decimal_string(&json[0][i]), // X
-            from_decimal_string(&json[1][i]), // Y
-            from_decimal_string(&json[2][i]), // Z
-        ];
-        let c1 = [
-            from_decimal_string(&json[3][i]), // X
-            from_decimal_string(&json[4][i]), // Y
-            from_decimal_string(&json[5][i]), // Z
-        ];
-
-        table_cards.push(EncryptedCard { c0, c1 });
-    }
-
-    table_cards
-}
-
-fn from_decimal_string(s: &str) -> Vec<u8> {
-    let n = BigUint::from_str_radix(s, 10).expect("invalid number");
-    let mut b = n.to_bytes_le();
-    b.resize(32, 0);
-    b
+    #[serde(rename = "publicSignals")]
+    public_signals: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -374,9 +90,299 @@ pub struct VKey {
     pub vk_beta_2: Vec<Vec<String>>,
     pub vk_gamma_2: Vec<Vec<String>>,
     pub vk_delta_2: Vec<Vec<String>>,
-    pub IC: Vec<Vec<String>>,
+    #[serde(rename = "IC")]
+    pub ic: Vec<Vec<String>>,
 }
 
+#[derive(Deserialize)]
+struct JsonDecryptionEntry {
+    #[serde(rename = "publicKey")]
+    public_key: ECPointJson,
+    cards: Vec<JsonCardProof>,
+}
+
+#[derive(Deserialize)]
+struct JsonCardProof {
+    decrypted: ECPointJson,
+    proof: ProofJson,
+    #[serde(rename = "publicSignals")]
+    public_signals: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecryptedCardWithProof {
+    pub decrypted: [Vec<u8>; 3],
+    pub proof: VerificationVariables,
+}
+
+#[derive(Debug)]
+pub struct Proof {
+    pub a: G1Affine,
+    pub b: G2Affine,
+    pub c: G1Affine,
+}
+pub struct ZkLoaderData;
+
+impl ZkLoaderData {
+    pub fn load_verifying_key(path: &str) -> VerifyingKeyBytes {
+        let vkey: VKey = Self::read_json(path);
+
+        Self::construct_verifying_key(&vkey)
+    }
+
+    pub fn load_player_public_keys(path: &str) -> Vec<(usize, PublicKey)> {
+        Self::read_json::<Vec<PublicKeyJson>>(path)
+            .into_iter()
+            .map(|pk| (pk.index, ECPointConverter::to_public_key(&pk.pk)))
+            .collect()
+    }
+    pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
+        Self::load_batch_proofs(path)
+    }
+
+    pub fn load_shuffle_proofs(path: &str) -> Vec<VerificationVariables> {
+        Self::load_batch_proofs(path)
+    }
+
+    pub fn load_table_cards_proofs(
+        path: &str,
+    ) -> Vec<(
+        PublicKey,
+        (
+            Vec<(EncryptedCard, [Vec<u8>; 3])>,
+            Vec<VerificationVariables>,
+        ),
+    )> {
+        let parsed: Vec<PlayerDecryptions> = Self::read_json(path);
+        parsed
+            .into_iter()
+            .map(Self::process_player_decryptions)
+            .collect()
+    }
+
+    pub fn load_cards_with_proofs(path: &str) -> Vec<(PublicKey, Vec<DecryptedCardWithProof>)> {
+        let parsed: Vec<JsonDecryptionEntry> = Self::read_json(path);
+        parsed
+            .into_iter()
+            .map(Self::process_card_decryption_entry)
+            .collect()
+    }
+
+    pub fn load_encrypted_table_cards(path: &str) -> Vec<EncryptedCard> {
+        let json: Vec<Vec<String>> = Self::read_json(path);
+
+        if json.len() != EXPECTED_DECK_ROWS {
+            panic!(
+                "Expected {} rows for encrypted deck, got {}",
+                EXPECTED_DECK_ROWS,
+                json.len()
+            );
+        }
+
+        (0..DECK_SIZE)
+            .map(|i| EncryptedCard {
+                c0: [
+                    decimal_string_to_bytes(&json[0][i]),
+                    decimal_string_to_bytes(&json[1][i]),
+                    decimal_string_to_bytes(&json[2][i]),
+                ],
+                c1: [
+                    decimal_string_to_bytes(&json[3][i]),
+                    decimal_string_to_bytes(&json[4][i]),
+                    decimal_string_to_bytes(&json[5][i]),
+                ],
+            })
+            .collect()
+    }
+    // === Private Methods ===
+    fn construct_verifying_key(vkey: &VKey) -> VerifyingKeyBytes {
+        let alpha = CurvePointDeserializer::deserialize_g1(&vkey.vk_alpha_1);
+        let beta = CurvePointDeserializer::deserialize_g2(&vkey.vk_beta_2);
+        let gamma = CurvePointDeserializer::deserialize_g2(&vkey.vk_gamma_2);
+        let delta = CurvePointDeserializer::deserialize_g2(&vkey.vk_delta_2);
+        let ic_points: Vec<G1Affine> = vkey
+            .ic
+            .iter()
+            .map(|x| CurvePointDeserializer::deserialize_g1(x))
+            .collect();
+
+        let alpha_beta_pairing = Bls12_381::pairing(alpha, beta).0;
+        let alpha_g1_beta_g2 = Self::serialize_uncompressed(&alpha_beta_pairing);
+        let gamma_neg = Self::serialize_uncompressed(&gamma.into_group().neg().into_affine());
+        let delta_neg = Self::serialize_uncompressed(&delta.into_group().neg().into_affine());
+
+        let ic_uncompressed = ic_points
+            .into_iter()
+            .map(|p| {
+                let bytes = Self::serialize_uncompressed(&p);
+                assert_eq!(
+                    bytes.len(),
+                    G1_UNCOMPRESSED_SIZE,
+                    "IC point must be {} bytes",
+                    G1_UNCOMPRESSED_SIZE
+                );
+                bytes
+            })
+            .collect();
+
+        VerifyingKeyBytes {
+            alpha_g1_beta_g2,
+            gamma_g2_neg_pc: gamma_neg,
+            delta_g2_neg_pc: delta_neg,
+            ic: ic_uncompressed,
+        }
+    }
+
+    fn load_batch_proofs(path: &str) -> Vec<VerificationVariables> {
+        let parsed: Vec<BatchProofEntry> = Self::read_json(path);
+
+        parsed
+            .into_iter()
+            .map(|entry| Self::construct_proof(&entry.proof, &entry.public_signals))
+            .collect()
+    }
+
+    fn process_player_decryptions(
+        entry: PlayerDecryptions,
+    ) -> (
+        PublicKey,
+        (
+            Vec<(EncryptedCard, [Vec<u8>; 3])>,
+            Vec<VerificationVariables>,
+        ),
+    ) {
+        let player_key = ECPointConverter::to_public_key(&entry.player_pub_key);
+        let mut decryptions = Vec::new();
+        let mut proofs = Vec::new();
+
+        for dec in entry.decryptions {
+            let card = EncryptedCard {
+                c0: dec.encrypted_card.c0.into(),
+                c1: dec.encrypted_card.c1.into(),
+            };
+            let decrypted = dec.dec.into();
+            let proof = ProofProcessor::create_proof(&dec.proof, &dec.public_signals);
+
+            decryptions.push((card, decrypted));
+            proofs.push(proof);
+        }
+
+        (player_key, (decryptions, proofs))
+    }
+
+    fn process_card_decryption_entry(
+        entry: JsonDecryptionEntry,
+    ) -> (PublicKey, Vec<DecryptedCardWithProof>) {
+        let player_key = ECPointConverter::to_public_key(&entry.public_key);
+        let cards = entry
+            .cards
+            .into_iter()
+            .map(|card| {
+                let decrypted = card.decrypted.into();
+                let proof = ProofProcessor::create_proof(&card.proof, &card.public_signals);
+                DecryptedCardWithProof { decrypted, proof }
+            })
+            .collect();
+        (player_key, cards)
+    }
+
+    fn construct_proof(proof_json: &ProofJson, signals: &[String]) -> VerificationVariables {
+        let proof = Proof {
+            a: deserialize_g1(&proof_json.pi_a),
+            b: deserialize_g2(&proof_json.pi_b),
+            c: deserialize_g1(&proof_json.pi_c),
+        };
+        let public_inputs = parse_public_signals(signals);
+        VerificationVariables {
+            proof_bytes: encode_proof(&proof),
+            public_input: encode_inputs(&public_inputs),
+        }
+    }
+
+    fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> T {
+        let raw = fs::read_to_string(path).unwrap_or_else(|_| panic!("Failed to read {}", path));
+        serde_json::from_str(&raw).unwrap_or_else(|_| panic!("Invalid JSON in {}", path))
+    }
+
+    fn serialize_uncompressed<T: CanonicalSerialize>(value: &T) -> Vec<u8> {
+        let mut buf = Vec::new();
+        value
+            .serialize_uncompressed(&mut buf)
+            .expect("Serialization failed");
+        buf
+    }
+}
+
+// === Helper Modules ===
+struct ECPointConverter;
+
+impl ECPointConverter {
+    fn to_public_key(point: &ECPointJson) -> PublicKey {
+        PublicKey {
+            x: Self::decimal_str_to_bytes_32(&point.x),
+            y: Self::decimal_str_to_bytes_32(&point.y),
+            z: Self::decimal_str_to_bytes_32(&point.z),
+        }
+    }
+
+    fn decimal_str_to_bytes_32(s: &str) -> [u8; 32] {
+        let n = BigUint::from_str_radix(s, 10).expect("Invalid decimal number");
+        let b = n.to_bytes_be();
+
+        if b.len() > FIELD_ELEMENT_SIZE {
+            panic!("Number too large for {} bytes", FIELD_ELEMENT_SIZE);
+        }
+
+        let mut buf = [0u8; FIELD_ELEMENT_SIZE];
+        buf[FIELD_ELEMENT_SIZE - b.len()..].copy_from_slice(&b);
+        buf.reverse();
+        buf
+    }
+}
+
+struct CurvePointDeserializer;
+
+impl CurvePointDeserializer {
+    fn deserialize_g1(point: &[String]) -> G1Affine {
+        let x_biguint = BigUint::from_str_radix(&point[0], 10).expect("Invalid x coordinate");
+        let y_biguint = BigUint::from_str_radix(&point[1], 10).expect("Invalid y coordinate");
+
+        let mut x_bytes = [0u8; 48];
+        let mut y_bytes = [0u8; 48];
+
+        let x_b = x_biguint.to_bytes_be();
+        let y_b = y_biguint.to_bytes_be();
+
+        x_bytes[48 - x_b.len()..].copy_from_slice(&x_b);
+        y_bytes[48 - y_b.len()..].copy_from_slice(&y_b);
+
+        let x = Fq::from_be_bytes_mod_order(&x_bytes);
+        let y = Fq::from_be_bytes_mod_order(&y_bytes);
+
+        G1Affine::new(x, y)
+    }
+
+    pub fn deserialize_g2(coords: &[Vec<String>]) -> G2Affine {
+        if coords.len() != 3 {
+            panic!("G2Affine coordinates must have exactly 3 pairs");
+        }
+
+        if coords[2][0] != "1" || coords[2][1] != "0" {
+            panic!("Expected third coordinate to be [1, 0] for affine representation");
+        }
+
+        let x_c0 = Fq::from_str(&coords[0][0]).expect("Invalid x_c1 coordinate");
+        let x_c1 = Fq::from_str(&coords[0][1]).expect("Invalid x_c0 coordinate");
+
+        let y_c0 = Fq::from_str(&coords[1][0]).expect("Invalid y_c1 coordinate");
+        let y_c1 = Fq::from_str(&coords[1][1]).expect("Invalid y_c0 coordinate");
+
+        let x = Fq2::new(x_c0, x_c1);
+        let y = Fq2::new(y_c0, y_c1);
+
+        G2Affine::new(x, y)
+    }
+}
 pub fn deserialize_g1(point: &Vec<String>) -> G1Affine {
     let x_biguint = BigUint::from_str_radix(&point[0], 10).unwrap();
     let y_biguint = BigUint::from_str_radix(&point[1], 10).unwrap();
@@ -396,25 +402,93 @@ pub fn deserialize_g1(point: &Vec<String>) -> G1Affine {
     G1Affine::new(x, y)
 }
 
-pub fn deserialize_g2(coords: &[Vec<String>]) -> Result<G2Affine, String> {
+struct ProofProcessor;
+
+impl ProofProcessor {
+    fn create_proof(proof_json: &ProofJson, signals: &[String]) -> VerificationVariables {
+        let proof = Proof {
+            a: CurvePointDeserializer::deserialize_g1(&proof_json.pi_a),
+            b: CurvePointDeserializer::deserialize_g2(&proof_json.pi_b),
+            c: CurvePointDeserializer::deserialize_g1(&proof_json.pi_c),
+        };
+
+        let public_inputs = Self::parse_public_signals(signals);
+
+        VerificationVariables {
+            proof_bytes: Self::encode_proof(&proof),
+            public_input: Self::encode_inputs(&public_inputs),
+        }
+    }
+
+    fn parse_public_signals(signals: &[String]) -> Vec<Fr> {
+        signals
+            .iter()
+            .map(|s| {
+                let n = BigUint::from_str_radix(s, 10).expect("Invalid public signal");
+                let bytes = n.to_bytes_le();
+                let mut buf = [0u8; FIELD_ELEMENT_SIZE];
+                buf[..bytes.len()].copy_from_slice(&bytes);
+                Fr::from_le_bytes_mod_order(&buf)
+            })
+            .collect()
+    }
+
+    fn encode_proof(proof: &Proof) -> ProofBytes {
+        let mut a_bytes = Vec::new();
+        let mut b_bytes = Vec::new();
+        let mut c_bytes = Vec::new();
+
+        proof
+            .a
+            .serialize_uncompressed(&mut a_bytes)
+            .expect("Failed to serialize proof component A");
+        proof
+            .b
+            .serialize_uncompressed(&mut b_bytes)
+            .expect("Failed to serialize proof component B");
+        proof
+            .c
+            .serialize_uncompressed(&mut c_bytes)
+            .expect("Failed to serialize proof component C");
+
+        ProofBytes {
+            a: a_bytes,
+            b: b_bytes,
+            c: c_bytes,
+        }
+    }
+
+    fn encode_inputs(inputs: &[Fr]) -> Vec<Vec<u8>> {
+        inputs
+            .iter()
+            .map(|fr| {
+                let mut buf = Vec::new();
+                fr.serialize_uncompressed(&mut buf)
+                    .expect("Failed to serialize field element");
+                buf
+            })
+            .collect()
+    }
+}
+pub fn deserialize_g2(coords: &[Vec<String>]) -> G2Affine {
     if coords.len() != 3 {
-        return Err("G2Affine coordinates must have exactly 3 pairs".to_string());
+        panic!("G2Affine coordinates must have exactly 3 pairs");
     }
 
     if coords[2][0] != "1" || coords[2][1] != "0" {
-        return Err("Expected third coordinate to be [1, 0] for affine representation".to_string());
+        panic!("Expected third coordinate to be [1, 0] for affine representation");
     }
 
-    let x_c0 = Fq::from_str(&coords[0][0]).map_err(|_| "Invalid x_c1 coordinate".to_string())?;
-    let x_c1 = Fq::from_str(&coords[0][1]).map_err(|_| "Invalid x_c0 coordinate".to_string())?;
+    let x_c0 = Fq::from_str(&coords[0][0]).expect("Invalid x_c1 coordinate");
+    let x_c1 = Fq::from_str(&coords[0][1]).expect("Invalid x_c0 coordinate");
 
-    let y_c0 = Fq::from_str(&coords[1][0]).map_err(|_| "Invalid y_c1 coordinate".to_string())?;
-    let y_c1 = Fq::from_str(&coords[1][1]).map_err(|_| "Invalid y_c0 coordinate".to_string())?;
+    let y_c0 = Fq::from_str(&coords[1][0]).expect("Invalid y_c1 coordinate");
+    let y_c1 = Fq::from_str(&coords[1][1]).expect("Invalid y_c0 coordinate");
 
     let x = Fq2::new(x_c0, x_c1);
     let y = Fq2::new(y_c0, y_c1);
 
-    Ok(G2Affine::new(x, y))
+    G2Affine::new(x, y)
 }
 
 fn parse_public_signals(signals: &[String]) -> Vec<Fr> {
@@ -428,13 +502,6 @@ fn parse_public_signals(signals: &[String]) -> Vec<Fr> {
             Fr::from_le_bytes_mod_order(&buf)
         })
         .collect()
-}
-
-#[derive(Debug)]
-pub struct Proof {
-    pub a: G1Affine,
-    pub b: G2Affine,
-    pub c: G1Affine,
 }
 
 fn encode_proof(proof: &Proof) -> ProofBytes {
@@ -463,67 +530,11 @@ fn encode_inputs(inputs: &[Fr]) -> Vec<Vec<u8>> {
         })
         .collect()
 }
-#[derive(Deserialize)]
-pub struct JsonDecryptionEntry {
-    pub publicKey: ECPointJson,
-    pub cards: Vec<JsonCardProof>,
-}
 
-#[derive(Deserialize)]
-pub struct JsonCardProof {
-    pub decrypted: ECPointJson,
-    pub proof: ProofJson,
-    pub publicSignals: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DecryptedCardWithProof {
-    pub decrypted: [Vec<u8>; 3],
-    pub proof: VerificationVariables,
-}
-
-pub fn load_cards_with_proofs(path: &str) -> Vec<(PublicKey, Vec<DecryptedCardWithProof>)> {
-    let raw = std::fs::read_to_string(path).expect("Failed to read JSON file");
-
-    let parsed: Vec<JsonDecryptionEntry> = serde_json::from_str(&raw).expect("Invalid JSON format");
-
-    let mut result = Vec::new();
-
-    for entry in parsed {
-        let player_key = PublicKey {
-            x: decimal_str_to_bytes_32(&entry.publicKey.x),
-            y: decimal_str_to_bytes_32(&entry.publicKey.y),
-            z: decimal_str_to_bytes_32(&entry.publicKey.z),
-        };
-
-        let mut cards = Vec::new();
-
-        for card in entry.cards {
-            let decrypted = [
-                from_decimal_string(&card.decrypted.x),
-                from_decimal_string(&card.decrypted.y),
-                from_decimal_string(&card.decrypted.z),
-            ];
-
-            let proof = Proof {
-                a: deserialize_g1(&card.proof.pi_a),
-                b: deserialize_g2(&card.proof.pi_b).expect("Invalid pi_b"),
-                c: deserialize_g1(&card.proof.pi_c),
-            };
-
-            let public_inputs = parse_public_signals(&card.publicSignals);
-
-            cards.push(DecryptedCardWithProof {
-                decrypted,
-                proof: VerificationVariables {
-                    proof_bytes: encode_proof(&proof),
-                    public_input: encode_inputs(&public_inputs),
-                },
-            });
-        }
-
-        result.push((player_key, cards));
-    }
-
-    result
+// === Utility Functions ===
+fn decimal_string_to_bytes(s: &str) -> Vec<u8> {
+    let n = BigUint::from_str_radix(s, 10).expect("Invalid decimal number");
+    let mut b = n.to_bytes_le();
+    b.resize(FIELD_ELEMENT_SIZE, 0);
+    b
 }

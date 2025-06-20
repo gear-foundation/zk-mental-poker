@@ -294,13 +294,13 @@ impl PairingOperations {
         builtin_address: ActorId,
         context: &'static str,
     ) -> Response {
-        let reply = msg::send_bytes_for_reply(builtin_address, &request.encode(), 0, 0)
-            .expect(&format!("{}: failed to send request", context))
+        let reply = msg::send_bytes_for_reply(builtin_address, request.encode(), 0, 0)
+            .unwrap_or_else(|_| panic!("{}: failed to send request", context))
             .await
-            .expect(&format!("{}: reply failed", context));
+            .unwrap_or_else(|_| panic!("{}: reply failed", context));
 
         Response::decode(&mut reply.as_slice())
-            .expect(&format!("{}: failed to decode response", context))
+            .unwrap_or_else(|_| panic!("{}: failed to decode response", context))
     }
 }
 
@@ -416,8 +416,8 @@ impl PublicInputParser {
         (0..config.num_cards)
             .map(|card_idx| EncryptedCard {
                 c0: [
-                    public_input[offset + 0 * config.num_cards + card_idx].clone(),
-                    public_input[offset + 1 * config.num_cards + card_idx].clone(),
+                    public_input[offset + card_idx].clone(),
+                    public_input[offset + config.num_cards + card_idx].clone(),
                     public_input[offset + 2 * config.num_cards + card_idx].clone(),
                 ],
                 c1: [

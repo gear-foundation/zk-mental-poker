@@ -1,10 +1,8 @@
-use gclient::metadata::runtime_types::gear_core::program;
 use gtest::Program;
 use gtest::WasmProgram;
 use hex_literal::hex;
-use poker_app::services::verify::VerifyingKey;
-use poker_app::services::VerifyingKeyBytes;
-use poker_client::{traits::*, Card, Config, Status, Suit};
+
+use poker_client::{traits::*, Config, Status};
 use pts_client::traits::{Pts, PtsFactory};
 use sails_rs::ActorId;
 use sails_rs::{
@@ -12,11 +10,8 @@ use sails_rs::{
     gtest::{calls::*, System},
 };
 mod utils_gclient;
+use utils_gclient::zk_loader::ZkLoaderData;
 use utils_gclient::{build_player_card_disclosure, init_deck_and_card_map};
-use utils_gclient::zk_loader::{
-    get_vkey, load_cards_with_proofs, load_encrypted_table_cards, load_partial_decrypt_proofs,
-    load_player_public_keys, load_shuffle_proofs, load_table_cards_proofs,
-};
 
 const USERS: [u64; 6] = [42, 43, 44, 45, 46, 47];
 
@@ -25,15 +20,13 @@ const BUILTIN_BLS381: ActorId = ActorId::new(hex!(
 ));
 
 use gbuiltin_bls381::{
-    ark_bls12_381::{Bls12_381, Fr, G1Affine, G1Projective as G1, G2Affine, G2Projective as G2},
+    ark_bls12_381::{Bls12_381, G1Affine, G1Projective as G1, G2Affine},
     ark_ec::{
         pairing::{MillerLoopOutput, Pairing},
-        AffineRepr, CurveGroup, Group, VariableBaseMSM,
+        Group, VariableBaseMSM,
     },
-    ark_ff::Field,
     ark_scale,
     ark_scale::hazmat::ArkScaleProjective,
-    ark_serialize::CanonicalDeserialize,
     Request, Response,
 };
 
@@ -41,15 +34,10 @@ use gstd::prelude::*;
 type ArkScale<T> = ark_scale::ArkScale<T, { ark_scale::HOST_CALL }>;
 type Gt = <Bls12_381 as Pairing>::TargetField;
 
-type Bases = Vec<u8>;
-type Scalars = Vec<u8>;
-type MsmOut = Vec<u8>;
 #[derive(Debug)]
-struct BlsBuiltinMock {
-    pub msm: Vec<((Bases, Scalars), MsmOut)>,
-}
+struct BlsBuiltinMock;
 impl WasmProgram for BlsBuiltinMock {
-    fn init(&mut self, payload: Vec<u8>) -> Result<Option<Vec<u8>>, &'static str> {
+    fn init(&mut self, _payload: Vec<u8>) -> Result<Option<Vec<u8>>, &'static str> {
         Ok(Some(vec![]))
     }
 
@@ -91,11 +79,11 @@ impl WasmProgram for BlsBuiltinMock {
         Ok(Some(result))
     }
 
-    fn handle_reply(&mut self, payload: Vec<u8>) -> Result<(), &'static str> {
+    fn handle_reply(&mut self, _payload: Vec<u8>) -> Result<(), &'static str> {
         Ok(())
     }
     /// Signal handler with given `payload`.
-    fn handle_signal(&mut self, payload: Vec<u8>) -> Result<(), &'static str> {
+    fn handle_signal(&mut self, _payload: Vec<u8>) -> Result<(), &'static str> {
         Ok(())
     }
     /// State of wasm program.
@@ -105,7 +93,7 @@ impl WasmProgram for BlsBuiltinMock {
         Ok(vec![])
     }
 
-    fn debug(&mut self, data: &str) {}
+    fn debug(&mut self, _data: &str) {}
 }
 
 async fn check_status(
@@ -125,7 +113,7 @@ async fn gtest_basic_workflow() {
         system.mint_to(USERS[i], 1_000_000_000_000_000);
     }
 
-    let builtin_mock = BlsBuiltinMock { msm: Vec::new() };
+    let builtin_mock = BlsBuiltinMock;
     let builtin_program = Program::mock_with_id(&system, BUILTIN_BLS381, builtin_mock);
 
     let init_message_id = builtin_program.send_bytes(USERS[0], b"Doesn't matter");
@@ -133,10 +121,10 @@ async fn gtest_basic_workflow() {
     assert!(block_run_result.succeed.contains(&init_message_id));
 
     let remoting = GTestRemoting::new(system, USERS[0].into());
-    let pks = load_player_public_keys("tests/test_data_gtest/player_pks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json");
 
-    let shuffle_vkey_bytes = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey_bytes = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
     // Upload pts
     let pts_code_id = remoting.system().submit_code(pts::WASM_BINARY);
@@ -236,8 +224,9 @@ async fn gtest_basic_workflow() {
 
     // Shuffle deck
     println!("SHUFFLE");
-    let proofs = load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
     service_client
         .shuffle_deck(deck, proofs)
         .send_recv(program_id)
@@ -252,8 +241,9 @@ async fn gtest_basic_workflow() {
     .await;
 
     println!("DECRYPT");
-    let decrypt_proofs =
-        load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -304,7 +294,7 @@ async fn gtest_basic_workflow() {
 
     println!("Decrypt 3 cards after preflop");
     let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
+        ZkLoaderData::load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
     for i in 0..USERS.len() {
         let proofs: Vec<_> = table_cards_proofs[i].1 .1[..3].to_vec();
         service_client
@@ -440,10 +430,11 @@ async fn gtest_basic_workflow() {
     println!("Cards on table {:?}", table_cards);
 
     println!("Players reveal their cards..");
-    let player_cards = load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
+    let player_cards =
+        ZkLoaderData::load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
     let (_, card_map) = init_deck_and_card_map();
     let hands = build_player_card_disclosure(player_cards, &card_map);
-    
+
     for i in 0..USERS.len() {
         let proofs = hands[i].1.clone();
         service_client
@@ -455,29 +446,35 @@ async fn gtest_basic_workflow() {
     }
     let result = service_client.status().recv(program_id).await.unwrap();
     println!("result {:?}", result);
-    if !matches!(result, Status::Finished {..}) {
+    if !matches!(result, Status::Finished { .. }) {
         assert!(true, "Wrong Status!");
     }
-    let participants = service_client.participants().recv(program_id).await.unwrap();
-    if let Status::Finished {winners, cash_prize} = result {
+    let participants = service_client
+        .participants()
+        .recv(program_id)
+        .await
+        .unwrap();
+    if let Status::Finished {
+        winners,
+        cash_prize,
+    } = result
+    {
         for (winner, prize) in winners.iter().zip(cash_prize) {
             participants.iter().map(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
                         assert!(true, "Wrong balance!");
-                    } 
+                    }
                 } else {
                     if info.balance != 1000 - 10 - 100 {
                         assert!(true, "Wrong balance!");
-                    } 
+                    }
                 }
             });
         }
     }
     println!("participants {:?}", participants);
 }
-
-
 
 #[tokio::test]
 async fn gtest_check_null_balance() {
@@ -487,7 +484,7 @@ async fn gtest_check_null_balance() {
         system.mint_to(USERS[i], 1_000_000_000_000_000);
     }
 
-    let builtin_mock = BlsBuiltinMock { msm: Vec::new() };
+    let builtin_mock = BlsBuiltinMock;
     let builtin_program = Program::mock_with_id(&system, BUILTIN_BLS381, builtin_mock);
 
     let init_message_id = builtin_program.send_bytes(USERS[0], b"Doesn't matter");
@@ -495,10 +492,10 @@ async fn gtest_check_null_balance() {
     assert!(block_run_result.succeed.contains(&init_message_id));
 
     let remoting = GTestRemoting::new(system, USERS[0].into());
-    let pks = load_player_public_keys("tests/test_data_gtest/player_pks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json");
 
-    let shuffle_vkey_bytes = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey_bytes = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
     // Upload pts
     let pts_code_id = remoting.system().submit_code(pts::WASM_BINARY);
@@ -583,8 +580,9 @@ async fn gtest_check_null_balance() {
 
     // Shuffle deck
     println!("SHUFFLE");
-    let proofs = load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
     service_client
         .shuffle_deck(deck, proofs)
         .send_recv(program_id)
@@ -592,8 +590,9 @@ async fn gtest_check_null_balance() {
         .unwrap();
 
     println!("DECRYPT");
-    let decrypt_proofs =
-        load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -626,7 +625,7 @@ async fn gtest_check_null_balance() {
 
     println!("Decrypt 3 cards after preflop");
     let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
+        ZkLoaderData::load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
     for i in 0..USERS.len() {
         let proofs: Vec<_> = table_cards_proofs[i].1 .1[..3].to_vec();
         service_client
@@ -717,10 +716,10 @@ async fn gtest_check_null_balance() {
     println!("Cards on table {:?}", table_cards);
 
     println!("Players reveal their cards..");
-    let player_cards = load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
+    let player_cards = ZkLoaderData::load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
     let (_, card_map) = init_deck_and_card_map();
     let hands = build_player_card_disclosure(player_cards, &card_map);
-    
+
     for i in 0..USERS.len() {
         let proofs = hands[i].1.clone();
         service_client
@@ -732,28 +731,33 @@ async fn gtest_check_null_balance() {
     }
     let result = service_client.status().recv(program_id).await.unwrap();
     println!("result {:?}", result);
-    if !matches!(result, Status::Finished {..}) {
+    if !matches!(result, Status::Finished { .. }) {
         assert!(true, "Wrong Status!");
     }
-    let participants = service_client.participants().recv(program_id).await.unwrap();
+    let participants = service_client
+        .participants()
+        .recv(program_id)
+        .await
+        .unwrap();
     assert_eq!(participants.len(), 2);
 
-    if let Status::Finished {winners, cash_prize} = result {
+    if let Status::Finished {
+        winners,
+        cash_prize,
+    } = result
+    {
         for (winner, prize) in winners.iter().zip(cash_prize) {
             participants.iter().map(|(id, info)| {
                 if winner == id {
                     if info.balance != prize {
                         assert!(true, "Wrong balance!");
-                    } 
+                    }
                 }
             });
         }
     }
     println!("participants {:?}", participants);
-
 }
-
-
 
 #[tokio::test]
 async fn gtest_check_restart_and_turn() {
@@ -763,7 +767,7 @@ async fn gtest_check_restart_and_turn() {
         system.mint_to(USERS[i], 1_000_000_000_000_000);
     }
 
-    let builtin_mock = BlsBuiltinMock { msm: Vec::new() };
+    let builtin_mock = BlsBuiltinMock;
     let builtin_program = Program::mock_with_id(&system, BUILTIN_BLS381, builtin_mock);
 
     let init_message_id = builtin_program.send_bytes(USERS[0], b"Doesn't matter");
@@ -771,10 +775,10 @@ async fn gtest_check_restart_and_turn() {
     assert!(block_run_result.succeed.contains(&init_message_id));
 
     let remoting = GTestRemoting::new(system, USERS[0].into());
-    let pks = load_player_public_keys("tests/test_data_gtest/player_pks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json");
 
-    let shuffle_vkey_bytes = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey_bytes = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
     // Upload pts
     let pts_code_id = remoting.system().submit_code(pts::WASM_BINARY);
@@ -859,8 +863,9 @@ async fn gtest_check_restart_and_turn() {
 
     // Shuffle deck
     println!("SHUFFLE");
-    let proofs = load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
     service_client
         .shuffle_deck(deck, proofs)
         .send_recv(program_id)
@@ -868,8 +873,9 @@ async fn gtest_check_restart_and_turn() {
         .unwrap();
 
     println!("DECRYPT");
-    let decrypt_proofs =
-        load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -893,10 +899,9 @@ async fn gtest_check_restart_and_turn() {
         .await
         .unwrap();
 
-    
     let result = service_client.status().recv(program_id).await.unwrap();
     println!("result {:?}", result);
-    if !matches!(result, Status::Finished {..}) {
+    if !matches!(result, Status::Finished { .. }) {
         assert!(true, "Wrong Status!");
     }
 
@@ -906,12 +911,7 @@ async fn gtest_check_restart_and_turn() {
         .await
         .unwrap();
 
-    check_status(
-        &mut service_client,
-        program_id,
-        Status::Registration,
-    )
-    .await;
+    check_status(&mut service_client, program_id, Status::Registration).await;
     // start game
     println!("START GAME");
     service_client
@@ -922,8 +922,9 @@ async fn gtest_check_restart_and_turn() {
 
     // Shuffle deck
     println!("SHUFFLE");
-    let proofs = load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
     service_client
         .shuffle_deck(deck, proofs)
         .send_recv(program_id)
@@ -932,7 +933,7 @@ async fn gtest_check_restart_and_turn() {
 
     println!("DECRYPT");
     let decrypt_proofs =
-        load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+        ZkLoaderData::load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -954,10 +955,7 @@ async fn gtest_check_restart_and_turn() {
         .send_recv(program_id)
         .await
         .unwrap();
-
 }
-
-
 
 #[tokio::test]
 async fn gtest_one_player_left() {
@@ -967,7 +965,7 @@ async fn gtest_one_player_left() {
         system.mint_to(USERS[i], 1_000_000_000_000_000);
     }
 
-    let builtin_mock = BlsBuiltinMock { msm: Vec::new() };
+    let builtin_mock = BlsBuiltinMock;
     let builtin_program = Program::mock_with_id(&system, BUILTIN_BLS381, builtin_mock);
 
     let init_message_id = builtin_program.send_bytes(USERS[0], b"Doesn't matter");
@@ -975,10 +973,10 @@ async fn gtest_one_player_left() {
     assert!(block_run_result.succeed.contains(&init_message_id));
 
     let remoting = GTestRemoting::new(system, USERS[0].into());
-    let pks = load_player_public_keys("tests/test_data_gtest/player_pks.json");
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json");
 
-    let shuffle_vkey_bytes = get_vkey("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey_bytes = get_vkey("tests/test_data/decrypt_vkey.json");
+    let shuffle_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
     // Upload pts
     let pts_code_id = remoting.system().submit_code(pts::WASM_BINARY);
@@ -1078,8 +1076,9 @@ async fn gtest_one_player_left() {
 
     // Shuffle deck
     println!("SHUFFLE");
-    let proofs = load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
-    let deck = load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
     service_client
         .shuffle_deck(deck, proofs)
         .send_recv(program_id)
@@ -1094,8 +1093,9 @@ async fn gtest_one_player_left() {
     .await;
 
     println!("DECRYPT");
-    let decrypt_proofs =
-        load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -1146,7 +1146,7 @@ async fn gtest_one_player_left() {
 
     println!("Decrypt 3 cards after preflop");
     let table_cards_proofs =
-        load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
+        ZkLoaderData::load_table_cards_proofs("tests/test_data_gtest/table_decryptions.json");
     for i in 0..USERS.len() {
         let proofs: Vec<_> = table_cards_proofs[i].1 .1[..3].to_vec();
         service_client
@@ -1235,7 +1235,7 @@ async fn gtest_one_player_left() {
         .unwrap();
     println!("Cards on table {:?}", table_cards);
 
-    for i in 0..players_amount-1 {
+    for i in 0..players_amount - 1 {
         service_client
             .turn(poker_client::Action::Fold)
             .with_args(GTestArgs::new(USERS[i].into()))
@@ -1246,25 +1246,32 @@ async fn gtest_one_player_left() {
 
     let result = service_client.status().recv(program_id).await.unwrap();
     println!("result {:?}", result);
-    if !matches!(result, Status::Finished {..}) {
+    if !matches!(result, Status::Finished { .. }) {
         assert!(true, "Wrong Status!");
     }
-    let participants = service_client.participants().recv(program_id).await.unwrap();
-    if let Status::Finished {winners, cash_prize} = result {
+    let participants = service_client
+        .participants()
+        .recv(program_id)
+        .await
+        .unwrap();
+    if let Status::Finished {
+        winners,
+        cash_prize,
+    } = result
+    {
         for (winner, prize) in winners.iter().zip(cash_prize) {
             participants.iter().map(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
                         assert!(true, "Wrong balance!");
-                    } 
+                    }
                 } else {
                     if info.balance != 1000 - 10 - 100 {
                         assert!(true, "Wrong balance!");
-                    } 
+                    }
                 }
             });
         }
     }
     println!("participants {:?}", participants);
 }
-
