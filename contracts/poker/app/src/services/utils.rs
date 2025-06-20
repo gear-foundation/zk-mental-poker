@@ -33,6 +33,7 @@ pub struct TurnManager<Id> {
     turn_index: u64,
 }
 
+#[allow(clippy::new_without_default)]
 impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     pub fn new() -> Self {
         Self {

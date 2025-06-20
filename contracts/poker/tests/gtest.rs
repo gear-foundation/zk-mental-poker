@@ -460,7 +460,7 @@ async fn gtest_basic_workflow() {
     } = result
     {
         for (winner, prize) in winners.iter().zip(cash_prize) {
-            participants.iter().map(|(id, info)| {
+            participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
                         assert!(true, "Wrong balance!");
@@ -716,7 +716,8 @@ async fn gtest_check_null_balance() {
     println!("Cards on table {:?}", table_cards);
 
     println!("Players reveal their cards..");
-    let player_cards = ZkLoaderData::load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
+    let player_cards =
+        ZkLoaderData::load_cards_with_proofs("tests/test_data_gtest/player_decryptions.json");
     let (_, card_map) = init_deck_and_card_map();
     let hands = build_player_card_disclosure(player_cards, &card_map);
 
@@ -747,7 +748,7 @@ async fn gtest_check_null_balance() {
     } = result
     {
         for (winner, prize) in winners.iter().zip(cash_prize) {
-            participants.iter().map(|(id, info)| {
+            participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != prize {
                         assert!(true, "Wrong balance!");
@@ -932,8 +933,9 @@ async fn gtest_check_restart_and_turn() {
         .unwrap();
 
     println!("DECRYPT");
-    let decrypt_proofs =
-        ZkLoaderData::load_partial_decrypt_proofs("tests/test_data_gtest/partial_decrypt_proofs.json");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
     service_client
         .submit_all_partial_decryptions(decrypt_proofs)
         .send_recv(program_id)
@@ -1260,7 +1262,7 @@ async fn gtest_one_player_left() {
     } = result
     {
         for (winner, prize) in winners.iter().zip(cash_prize) {
-            participants.iter().map(|(id, info)| {
+            participants.iter().for_each(|(id, info)| {
                 if winner == id {
                     if info.balance != 1000 - 10 - 100 + prize {
                         assert!(true, "Wrong balance!");

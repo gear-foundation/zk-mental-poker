@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::ProgramId;
-use poker_client::{traits::*, Card, Config, PublicKey, Suit};
+use poker_client::{Card, Config, PublicKey, Suit};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
 use ark_ec::AffineRepr;
@@ -9,7 +10,6 @@ use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr}
 use ark_ff::PrimeField;
 use poker_client::VerificationVariables;
 use sails_rs::collections::HashMap;
-use sails_rs::Decode;
 use zk_loader::{DecryptedCardWithProof, ZkLoaderData};
 
 pub const USERS_STR: &[&str] = &["//John", "//Mike", "//Dan"];
