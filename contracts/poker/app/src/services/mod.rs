@@ -342,7 +342,7 @@ impl PokerService {
                         .participants
                         .iter_mut()
                         .find(|(player_id, _)| player_id == id)
-                        .unwrap();
+                        .expect("There is no such participant");
                     participant.balance += *bet;
                 }
             }
@@ -417,7 +417,7 @@ impl PokerService {
         let request = [
             "PokerFactory".encode(),
             "DeleteLobby".to_string().encode(),
-            (msg::source()).encode(),
+            (exec::program_id()).encode(),
         ]
         .concat();
 
@@ -427,7 +427,7 @@ impl PokerService {
             .expect("PokerFactory: Error DeleteLobby");
 
         self.emit_event(Event::Killed).expect("Notification Error");
-        exec::exit(storage.factory_actor_id);
+        exec::exit(storage.config.admin_id);
     }
 
     pub async fn cancel_game(&mut self) {
@@ -446,7 +446,7 @@ impl PokerService {
                         .participants
                         .iter_mut()
                         .find(|(participant_id, _)| *participant_id == *id)
-                        .unwrap()
+                        .expect("There is no such participant")
                         .1
                         .balance += bet;
                 }
@@ -587,7 +587,7 @@ impl PokerService {
             .participants
             .iter_mut()
             .find(|(id, _)| *id == sb_player)
-            .unwrap();
+            .expect("There is no such participant");
         if participant.balance <= storage.config.small_blind {
             storage.active_participants.remove(&sb_player);
             storage.all_in_players.push(sb_player);
@@ -836,7 +836,7 @@ impl PokerService {
             .participants
             .iter_mut()
             .find(|(id, _)| *id == player)
-            .unwrap();
+            .expect("There is no such participant");
 
         let last_active_time = betting.last_active_time.expect("No last active time");
         let current_time = exec::block_timestamp();
@@ -854,6 +854,7 @@ impl PokerService {
                         winners: vec![next_or_last],
                         cash_prize: vec![prize],
                     };
+                    storage.participants.retain(|(_, info)| info.balance != 0);
                     storage.betting = None;
                     self.emit_event(Event::Finished {
                         winners: vec![next_or_last],
@@ -986,9 +987,10 @@ impl PokerService {
                 .participants
                 .iter_mut()
                 .find(|(id, _)| id == winner)
-                .unwrap();
+                .expect("There is no such participant");
 
             participant.balance += prize;
+            storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
                 winners: vec![*winner],
                 cash_prize: vec![prize],
@@ -1018,12 +1020,12 @@ impl PokerService {
             } else {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
-                betting.turn = storage.active_participants.next().unwrap();
+                betting.turn = storage.active_participants.next().expect("There is no next one");
                 betting.last_active_time = None;
                 betting.acted_players.clear();
                 betting.current_bet = 0;
 
-                *stage = stage.clone().next().unwrap();
+                *stage = stage.clone().next().expect("There is no next one");
                 self.emit_event(Event::NextStage(stage.clone()))
                     .expect("Event Error");
             }
@@ -1111,10 +1113,10 @@ impl PokerService {
                     .participants
                     .iter_mut()
                     .find(|(id, _)| id == winner)
-                    .unwrap();
+                    .expect("There is no such participant");
                 participant.balance += prize;
-            }
-
+            }    
+            storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
                 winners: winners.clone(),
                 cash_prize: cash_prize.clone(),

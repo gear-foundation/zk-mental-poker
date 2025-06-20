@@ -27,6 +27,7 @@ pub struct TurnManager {
 }
 
 #[tokio::test]
+#[ignore]
 async fn upload_contracts_to_testnet() -> Result<()> {
     let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
     // let api = GearApi::dev().await?;
@@ -119,6 +120,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         lobby_name: "Lobby".to_string(),
         small_blind: 5,
         big_blind: 10,
+        number_of_participants: 3,
         starting_bank: 1000,
         time_per_move_ms: 15_000,
     };
@@ -148,6 +150,7 @@ pub struct Config {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_basic_workflow() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -375,6 +378,7 @@ async fn all_players_check(
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_time_limit() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -409,6 +413,7 @@ async fn test_time_limit() -> Result<()> {
 }
 
 // #[tokio::test]
+// #[ignore]
 // async fn test_time_limit_only_one_player_stayed() -> Result<()> {
 //     let api = GearApi::dev().await?;
 
@@ -437,6 +442,7 @@ async fn test_time_limit() -> Result<()> {
 // }
 
 #[tokio::test]
+#[ignore]
 async fn test_registration() -> Result<()> {
     use poker_client::PublicKey;
 
@@ -478,6 +484,7 @@ async fn test_registration() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_delete_player() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -514,6 +521,7 @@ async fn test_delete_player() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_all_in_case_1() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -605,6 +613,7 @@ async fn test_all_in_case_1() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_all_in_case_2() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -761,6 +770,7 @@ async fn test_all_in_case_2() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_restart_and_all_in_case() -> Result<()> {
     let api = GearApi::dev().await?;
 
@@ -867,6 +877,7 @@ async fn test_restart_and_all_in_case() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_cancel_game() -> Result<()> {
     let api = GearApi::dev().await?;
 
