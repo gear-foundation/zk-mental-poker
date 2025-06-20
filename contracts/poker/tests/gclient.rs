@@ -120,7 +120,6 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         lobby_name: "Lobby".to_string(),
         small_blind: 5,
         big_blind: 10,
-        number_of_participants: 3,
         starting_bank: 1000,
         time_per_move_ms: 15_000,
     };

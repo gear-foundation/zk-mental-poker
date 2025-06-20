@@ -1020,7 +1020,10 @@ impl PokerService {
             } else {
                 storage.active_participants.reset_turn_index();
                 storage.already_invested_in_the_circle = HashMap::new();
-                betting.turn = storage.active_participants.next().expect("There is no next one");
+                betting.turn = storage
+                    .active_participants
+                    .next()
+                    .expect("There is no next one");
                 betting.last_active_time = None;
                 betting.acted_players.clear();
                 betting.current_bet = 0;
@@ -1115,7 +1118,7 @@ impl PokerService {
                     .find(|(id, _)| id == winner)
                     .expect("There is no such participant");
                 participant.balance += prize;
-            }    
+            }
             storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
                 winners: winners.clone(),
