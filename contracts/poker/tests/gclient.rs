@@ -351,8 +351,7 @@ async fn test_basic_workflow() -> Result<()> {
     assert_eq!(
         status,
         Status::Finished {
-            winners: vec![api_1.get_actor_id()],
-            cash_prize: vec![330]
+            pots: vec![(330, vec![api_1.get_actor_id()])]
         }
     );
 
@@ -403,8 +402,7 @@ async fn test_time_limit() -> Result<()> {
     assert_eq!(
         status,
         Status::Finished {
-            winners: vec![api.get_actor_id()],
-            cash_prize: vec![15]
+            pots: vec![(15, vec![api.get_actor_id()])]
         }
     );
 
@@ -603,8 +601,7 @@ async fn test_all_in_case_1() -> Result<()> {
     assert_eq!(
         status,
         Status::Finished {
-            winners: vec![api_1.get_actor_id()],
-            cash_prize: vec![3000]
+            pots: vec![(3000, vec![api_1.get_actor_id()])]
         }
     );
 
@@ -760,8 +757,7 @@ async fn test_all_in_case_2() -> Result<()> {
     assert_eq!(
         status,
         Status::Finished {
-            winners: vec![api_1.get_actor_id()],
-            cash_prize: vec![3000]
+            pots: vec![(3000, vec![api_1.get_actor_id()])]
         }
     );
 

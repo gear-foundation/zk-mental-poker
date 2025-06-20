@@ -5,7 +5,7 @@ on:
     branches: [master]
   push:
     branches: [master]
-    
+
 defaults:
   run:
     working-directory: contracts

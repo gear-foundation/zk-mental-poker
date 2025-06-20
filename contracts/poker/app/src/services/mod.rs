@@ -65,15 +65,10 @@ pub enum Status {
     WaitingShuffleVerification,
     WaitingStart,
     WaitingPartialDecryptionsForPlayersCards,
-    Play {
-        stage: Stage,
-    },
+    Play { stage: Stage },
     WaitingForCardsToBeDisclosed,
     WaitingForAllTableCardsToBeDisclosed,
-    Finished {
-        winners: Vec<ActorId>,
-        cash_prize: Vec<u128>,
-    },
+    Finished { pots: Vec<(u128, Vec<ActorId>)> },
 }
 
 #[derive(Debug, Decode, Encode, TypeInfo, Clone, PartialEq, Eq)]
@@ -148,8 +143,7 @@ pub enum Event {
     },
     NextStage(Stage),
     Finished {
-        winners: Vec<ActorId>,
-        cash_prize: Vec<u128>,
+        pots: Vec<(u128, Vec<ActorId>)>,
     },
     Killed,
     AllPartialDecryptionsSubmited,
@@ -850,14 +844,12 @@ impl PokerService {
                     let prize = storage.betting_bank.values().sum();
                     participant.balance += prize;
                     storage.status = Status::Finished {
-                        winners: vec![next_or_last],
-                        cash_prize: vec![prize],
+                        pots: vec![(prize, vec![next_or_last])],
                     };
                     storage.participants.retain(|(_, info)| info.balance != 0);
                     storage.betting = None;
                     self.emit_event(Event::Finished {
-                        winners: vec![next_or_last],
-                        cash_prize: vec![prize],
+                        pots: vec![(prize, vec![next_or_last])],
                     })
                     .expect("Event Error");
                     return;
@@ -991,12 +983,10 @@ impl PokerService {
             participant.balance += prize;
             storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
-                winners: vec![*winner],
-                cash_prize: vec![prize],
+                pots: vec![(prize, vec![*winner])],
             };
             self.emit_event(Event::Finished {
-                winners: vec![*winner],
-                cash_prize: vec![prize],
+                pots: vec![(prize, vec![*winner])],
             })
             .expect("Event Error");
         }
@@ -1104,30 +1094,33 @@ impl PokerService {
                 Err(_) => unreachable!(),
             };
 
-            let (winners, cash_prize) = evaluate_round(
+            let pots = evaluate_round(
                 storage.revealed_players.clone(),
                 table_cards,
                 &storage.betting_bank,
             );
 
-            for (winner, prize) in winners.iter().zip(cash_prize.clone()) {
+            let mut prizes_by_player: HashMap<ActorId, u128> = HashMap::new();
+            for (amount, winners) in &pots {
+                let share = *amount / winners.len() as u128;
+                for winner in winners {
+                    *prizes_by_player.entry(*winner).or_insert(0) += share;
+                }
+            }
+
+            for (winner, prize) in &prizes_by_player {
                 let (_, participant) = storage
                     .participants
                     .iter_mut()
                     .find(|(id, _)| id == winner)
                     .expect("There is no such participant");
-                participant.balance += prize;
+                participant.balance += *prize;
             }
+
             storage.participants.retain(|(_, info)| info.balance != 0);
-            storage.status = Status::Finished {
-                winners: winners.clone(),
-                cash_prize: cash_prize.clone(),
-            };
-            self.emit_event(Event::Finished {
-                winners,
-                cash_prize,
-            })
-            .expect("Event Error");
+            storage.status = Status::Finished { pots: pots.clone() };
+            self.emit_event(Event::Finished { pots })
+                .expect("Event Error");
         }
 
         self.emit_event(Event::CardsDisclosed).expect("Event Error");
