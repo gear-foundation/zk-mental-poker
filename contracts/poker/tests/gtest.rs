@@ -1273,3 +1273,266 @@ async fn gtest_one_player_left() {
     }
     println!("participants {:?}", participants);
 }
+
+#[tokio::test]
+async fn gtest_check_cancel_registration_and_turn() {
+    let system = System::new();
+    system.init_logger();
+    for i in 0..USERS.len() {
+        system.mint_to(USERS[i], 1_000_000_000_000_000);
+    }
+
+    let builtin_mock = BlsBuiltinMock;
+    let builtin_program = Program::mock_with_id(&system, BUILTIN_BLS381, builtin_mock);
+
+    let init_message_id = builtin_program.send_bytes(USERS[0], b"Doesn't matter");
+    let block_run_result = system.run_next_block();
+    assert!(block_run_result.succeed.contains(&init_message_id));
+
+    let remoting = GTestRemoting::new(system, USERS[0].into());
+    let pks = ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json");
+
+    let shuffle_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey_bytes = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
+
+    // Upload pts
+    let pts_code_id = remoting.system().submit_code(pts::WASM_BINARY);
+    let pts_factory = pts_client::PtsFactory::new(remoting.clone());
+    let accural: u128 = 10_000;
+    let time_ms_between_balance_receipt: u64 = 10_000;
+    let pts_id = pts_factory
+        .new(accural, time_ms_between_balance_receipt)
+        .send_recv(pts_code_id, b"salt")
+        .await
+        .unwrap();
+
+    let mut pts_service_client = pts_client::Pts::new(remoting.clone());
+    for i in 0..USERS.len() {
+        pts_service_client
+            .get_accural()
+            .with_args(GTestArgs::new(USERS[i].into()))
+            .send_recv(pts_id)
+            .await
+            .unwrap();
+    }
+    for i in 0..USERS.len() {
+        let balance = pts_service_client
+            .get_balance(USERS[i].into())
+            .recv(pts_id)
+            .await
+            .unwrap();
+
+        assert_eq!(balance, accural);
+    }
+    // Submit program code into the system
+    let program_code_id = remoting.system().submit_code(poker::WASM_BINARY);
+
+    let program_factory = poker_client::PokerFactory::new(remoting.clone());
+
+    let program_id = program_factory
+        .new(
+            Config {
+                admin_id: USERS[0].into(),
+                admin_name: "Player_1".to_string(),
+                lobby_name: "Lobby name".to_string(),
+                small_blind: 5,
+                big_blind: 10,
+                starting_bank: 1000,
+                time_per_move_ms: 30_000,
+            },
+            pts_id,
+            pks[0].1.clone(),
+            shuffle_vkey_bytes,
+            decrypt_vkey_bytes,
+        )
+        .send_recv(program_code_id, b"salt")
+        .await
+        .unwrap();
+
+    pts_service_client
+        .add_admin(program_id)
+        .send_recv(pts_id)
+        .await
+        .unwrap();
+    let mut service_client = poker_client::Poker::new(remoting.clone());
+
+    // REGISTER
+    println!("REGISTER");
+
+    for i in 1..USERS.len() {
+        service_client
+            .register("Player".to_string(), pks[i].1.clone())
+            .with_args(GTestArgs::new(USERS[i].into()))
+            .send_recv(program_id)
+            .await
+            .unwrap();
+    }
+
+    // start game
+    println!("START GAME");
+    service_client
+        .start_game()
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    // Shuffle deck
+    println!("SHUFFLE");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    service_client
+        .shuffle_deck(deck, proofs)
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    println!("DECRYPT");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
+    service_client
+        .submit_all_partial_decryptions(decrypt_proofs)
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    // Game logic
+    let players_amount = USERS.len();
+    for i in 2..players_amount {
+        service_client
+            .turn(poker_client::Action::Fold)
+            .with_args(GTestArgs::new(USERS[i].into()))
+            .send_recv(program_id)
+            .await
+            .unwrap();
+    }
+    service_client
+        .turn(poker_client::Action::Fold)
+        .with_args(GTestArgs::new(USERS[0].into()))
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    let result = service_client.status().recv(program_id).await.unwrap();
+    println!("result {:?}", result);
+    if !matches!(result, Status::Finished { .. }) {
+        assert!(true, "Wrong Status!");
+    }
+
+    service_client
+        .restart_game()
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    check_status(&mut service_client, program_id, Status::Registration).await;
+
+    // start game
+    println!("START GAME");
+    service_client
+        .start_game()
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    // Shuffle deck
+    println!("SHUFFLE");
+    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data_gtest/shuffle_proofs.json");
+    let deck =
+        ZkLoaderData::load_encrypted_table_cards("tests/test_data_gtest/encrypted_deck.json");
+    service_client
+        .shuffle_deck(deck, proofs)
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    println!("DECRYPT");
+    let decrypt_proofs = ZkLoaderData::load_partial_decrypt_proofs(
+        "tests/test_data_gtest/partial_decrypt_proofs.json",
+    );
+    service_client
+        .submit_all_partial_decryptions(decrypt_proofs)
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    check_status(
+        &mut service_client,
+        program_id,
+        Status::Play {
+            stage: poker_client::Stage::PreFlop,
+        },
+    )
+    .await;
+
+    let players_amount = USERS.len();
+    for i in 3..players_amount {
+        service_client
+            .turn(poker_client::Action::Call)
+            .with_args(GTestArgs::new(USERS[i].into()))
+            .send_recv(program_id)
+            .await
+            .unwrap();
+    }
+
+    service_client
+        .turn(poker_client::Action::Fold)
+        .with_args(GTestArgs::new(USERS[0].into()))
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    service_client
+        .turn(poker_client::Action::Fold)
+        .with_args(GTestArgs::new(USERS[1].into()))
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    let result = service_client.status().recv(program_id).await.unwrap();
+    println!("result {:?}", result);
+    if !matches!(result, Status::Finished { .. }) {
+        assert!(true, "Wrong Status!");
+    }
+
+    service_client
+        .restart_game()
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    check_status(&mut service_client, program_id, Status::Registration).await;
+
+    let active_participants = service_client
+        .active_participants()
+        .recv(program_id)
+        .await
+        .unwrap();
+    println!("active_participants: {:?}", active_participants);
+    assert_eq!(active_participants.first_index, 2);
+
+    // Cancel registration
+    service_client
+        .cancel_registration()
+        .with_args(GTestArgs::new(USERS[1].into()))
+        .send_recv(program_id)
+        .await
+        .unwrap();
+
+    let active_participants = service_client
+        .active_participants()
+        .recv(program_id)
+        .await
+        .unwrap();
+    println!("active_participants: {:?}", active_participants);
+    assert_eq!(active_participants.first_index, 1);
+
+    // start game
+    println!("START GAME");
+    service_client
+        .start_game()
+        .send_recv(program_id)
+        .await
+        .unwrap();
+}

@@ -288,7 +288,9 @@ impl PokerService {
     pub async fn cancel_registration(&mut self) {
         let storage = self.get_mut();
         let msg_src = msg::source();
-
+        if msg_src == storage.config.admin_id {
+            panic("Access denied");
+        }
         match storage.status {
             Status::Registration
             | Status::WaitingShuffleVerification
@@ -309,7 +311,7 @@ impl PokerService {
                 .expect("PTS: Error transfer points to player");
 
             storage.participants.retain(|(id, _)| *id != msg_src);
-            storage.active_participants.remove(&msg_src);
+            storage.active_participants.remove_and_update_first_index(&msg_src);
             storage.status = Status::Registration;
         } else {
             panic("You are not player");
@@ -501,7 +503,7 @@ impl PokerService {
                 .expect("PTS: Error transfer points to player");
 
             storage.participants.retain(|(id, _)| *id != player_id);
-            storage.active_participants.remove(&player_id);
+            storage.active_participants.remove_and_update_first_index(&player_id);
             storage.status = Status::Registration;
         } else {
             panic("There is no such player");
@@ -568,8 +570,7 @@ impl PokerService {
             panic("Wrong status");
         }
 
-        storage.active_participants.reset_turn_index();
-        storage.active_participants.set(storage.round);
+        storage.active_participants.set_first_index();
 
         let sb_player = storage
             .active_participants
@@ -638,6 +639,7 @@ impl PokerService {
         });
 
         storage.status = Status::WaitingShuffleVerification;
+        storage.active_participants.new_round();
         storage.round += 1;
         self.emit_event(Event::GameStarted)
             .expect("Event Invocation Error");
