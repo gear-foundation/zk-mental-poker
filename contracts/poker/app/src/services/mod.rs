@@ -311,7 +311,9 @@ impl PokerService {
                 .expect("PTS: Error transfer points to player");
 
             storage.participants.retain(|(id, _)| *id != msg_src);
-            storage.active_participants.remove_and_update_first_index(&msg_src);
+            storage
+                .active_participants
+                .remove_and_update_first_index(&msg_src);
             storage.status = Status::Registration;
         } else {
             panic("You are not player");
@@ -503,7 +505,9 @@ impl PokerService {
                 .expect("PTS: Error transfer points to player");
 
             storage.participants.retain(|(id, _)| *id != player_id);
-            storage.active_participants.remove_and_update_first_index(&player_id);
+            storage
+                .active_participants
+                .remove_and_update_first_index(&player_id);
             storage.status = Status::Registration;
         } else {
             panic("There is no such player");

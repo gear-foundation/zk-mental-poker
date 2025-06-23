@@ -176,7 +176,6 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
             }
         }
     }
-    
 
     pub fn clear_all(&mut self) {
         self.active_ids.clear();
@@ -765,6 +764,9 @@ mod tests {
         bank.insert(3.into(), 500);
 
         let pots = evaluate_round(hands, table_cards, &bank);
-        assert_pots_eq(pots, vec![(300, vec![1.into()]), (800, vec![2.into(), 3.into()])]);
+        assert_pots_eq(
+            pots,
+            vec![(300, vec![1.into()]), (800, vec![2.into(), 3.into()])],
+        );
     }
 }
