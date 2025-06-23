@@ -353,6 +353,71 @@ async fn gtest_one_player_left() {
     println!("participants {:?}", participants);
 }
 
+#[tokio::test]
+async fn gtest_check_cancel_registration_and_turn() {
+    let (mut env, test_data) = TestEnvironment::setup().await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+        (USERS[0], poker_client::Action::Fold),
+    ])
+    .await;
+
+    env.verify_game_finished().await;
+    env.restart_game().await;
+    env.check_status(Status::Registration).await;
+
+    env.start_and_setup_game(&test_data).await;
+    env.check_status(Status::Play {
+        stage: poker_client::Stage::PreFlop,
+    })
+    .await;
+
+    env.run_actions(vec![
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+        (USERS[0], poker_client::Action::Fold),
+        (USERS[1], poker_client::Action::Fold),
+    ])
+    .await;
+    env.verify_game_finished().await;
+    env.restart_game().await;
+
+    let active_participants = env
+        .service_client
+        .active_participants()
+        .recv(env.program_id)
+        .await
+        .unwrap();
+    println!("active_participants: {:?}", active_participants);
+    assert_eq!(active_participants.first_index, 2);
+
+    // Cancel registration
+    env.service_client
+        .cancel_registration()
+        .with_args(GTestArgs::new(USERS[1].into()))
+        .send_recv(env.program_id)
+        .await
+        .unwrap();
+
+    let active_participants = env
+        .service_client
+        .active_participants()
+        .recv(env.program_id)
+        .await
+        .unwrap();
+    println!("active_participants: {:?}", active_participants);
+    assert_eq!(active_participants.first_index, 1);
+}
+
 struct TestEnvironment {
     pts_id: ActorId,
     program_id: ActorId,

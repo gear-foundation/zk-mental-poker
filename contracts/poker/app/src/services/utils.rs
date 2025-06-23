@@ -31,6 +31,7 @@ impl PartialDecryptionsByCard {
 pub struct TurnManager<Id> {
     active_ids: Vec<Id>,
     turn_index: u64,
+    first_index: u16,
 }
 
 #[allow(clippy::new_without_default)]
@@ -39,7 +40,12 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Self {
             active_ids: Vec::new(),
             turn_index: 0,
+            first_index: 0,
         }
+    }
+
+    pub fn new_round(&mut self) {
+        self.first_index = (self.first_index + 1) % self.active_ids.len() as u16;
     }
 
     pub fn add(&mut self, id: Id) {
@@ -155,12 +161,20 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         self.active_ids.get(prev_index)
     }
 
-    pub fn set(&mut self, round: u64) {
-        if self.active_ids.is_empty() || round == 0 {
-            return;
-        }
+    pub fn set_first_index(&mut self) {
+        self.turn_index = self.first_index as u64;
+    }
 
-        self.turn_index = (self.turn_index + round) % self.active_ids.len() as u64;
+    pub fn remove_and_update_first_index(&mut self, id: &Id) {
+        if let Some(pos) = self.active_ids.iter().position(|x| x == id) {
+            self.active_ids.remove(pos);
+
+            if self.first_index as usize > pos {
+                self.first_index -= 1;
+            } else if self.first_index as usize >= self.active_ids.len() {
+                self.first_index = 0;
+            }
+        }
     }
 
     pub fn clear_all(&mut self) {
@@ -327,70 +341,6 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
     }
 }
 
-// pub fn evaluate_round(
-//     hands: HashMap<ActorId, (Card, Card)>,
-//     table_cards: [Card; 5],
-//     bank: &HashMap<ActorId, u128>,
-// ) -> (Vec<ActorId>, Vec<u128>) {
-//     let mut pots: Vec<(Vec<ActorId>, u128)> = Vec::new();
-//     let mut stakes: Vec<(ActorId, u128)> = bank.iter().map(|(id, amt)| (*id, *amt)).collect();
-//     stakes.sort_by_key(|&(_, amt)| amt);
-
-//     while !stakes.is_empty() {
-//         let (_, min_amt) = stakes[0];
-//         let mut pot = 0;
-//         let mut eligible = Vec::new();
-
-//         for (id, amount) in &mut stakes {
-//             if *amount >= min_amt {
-//                 pot += min_amt;
-//                 *amount -= min_amt;
-//                 eligible.push(*id);
-//             } else {
-//                 pot += *amount;
-//                 *amount = 0;
-//                 eligible.push(*id);
-//             }
-//         }
-
-//         pots.push((eligible.clone(), pot));
-//         stakes.retain(|&(_, amt)| amt > 0);
-//     }
-
-//     let mut rankings: HashMap<ActorId, HandRank> = HashMap::new();
-//     for (id, (c1, c2)) in &hands {
-//         let mut cards = vec![c1.clone(), c2.clone()];
-//         cards.extend_from_slice(&table_cards);
-//         rankings.insert(*id, rank_hand(cards));
-//     }
-
-//     let mut results: HashMap<ActorId, u128> = HashMap::new();
-//     for (eligible, pot_amount) in pots {
-//         let mut ranked: Vec<_> = eligible
-//             .iter()
-//             .filter_map(|id| rankings.get(id).map(|r| (id, r)))
-//             .collect();
-
-//         ranked.sort_by(|a, b| b.1.cmp(a.1)); // highest first
-//         if let Some(best_rank) = ranked.clone().first().map(|(_, rank)| rank) {
-//             let winners: Vec<ActorId> = ranked
-//                 .into_iter()
-//                 .filter(|(_, rank)| rank == best_rank)
-//                 .map(|(id, _)| *id)
-//                 .collect();
-
-//             let share = pot_amount / (winners.len() as u128);
-//             for winner in winners {
-//                 *results.entry(winner).or_insert(0) += share;
-//             }
-//         }
-//     }
-
-//     let mut sorted = results.into_iter().collect::<Vec<_>>();
-//     sorted.sort_by_key(|&(_, prize)| sails_rs::cmp::Reverse(prize));
-//     let (winners, prizes): (Vec<_>, Vec<_>) = sorted.into_iter().unzip();
-//     (winners, prizes)
-// }
 pub fn evaluate_round(
     hands: HashMap<ActorId, (Card, Card)>,
     table_cards: [Card; 5],
@@ -749,5 +699,74 @@ mod tests {
 
         let pots = evaluate_round(hands, table_cards, &bank);
         assert_pots_eq(pots, vec![(450, vec![1.into(), 2.into()])]);
+    }
+
+    #[test]
+    fn test_pots_1() {
+        let mut hands = HashMap::new();
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 6), Card::new(Suit::Hearts, 8)),
+        );
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 13), Card::new(Suit::Hearts, 3)),
+        );
+        hands.insert(
+            3.into(),
+            (Card::new(Suit::Hearts, 13), Card::new(Suit::Diamonds, 8)),
+        );
+
+        let table_cards = [
+            Card::new(Suit::Hearts, 7),
+            Card::new(Suit::Clubs, 5),
+            Card::new(Suit::Diamonds, 14),
+            Card::new(Suit::Spades, 13),
+            Card::new(Suit::Spades, 9),
+        ];
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 500);
+        bank.insert(3.into(), 500);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(300, vec![1.into()]), (800, vec![3.into()])]);
+    }
+
+    #[test]
+    fn test_pots_2() {
+        let mut hands = HashMap::new();
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 6), Card::new(Suit::Hearts, 8)),
+        );
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 13), Card::new(Suit::Hearts, 3)),
+        );
+        hands.insert(
+            3.into(),
+            (Card::new(Suit::Hearts, 13), Card::new(Suit::Diamonds, 3)),
+        );
+
+        let table_cards = [
+            Card::new(Suit::Hearts, 7),
+            Card::new(Suit::Clubs, 5),
+            Card::new(Suit::Diamonds, 14),
+            Card::new(Suit::Spades, 13),
+            Card::new(Suit::Spades, 9),
+        ];
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 500);
+        bank.insert(3.into(), 500);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(
+            pots,
+            vec![(300, vec![1.into()]), (800, vec![2.into(), 3.into()])],
+        );
     }
 }
