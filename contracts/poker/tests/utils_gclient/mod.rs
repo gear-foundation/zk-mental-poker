@@ -140,7 +140,7 @@ pub async fn make_zk_actions(
         ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
 
     let mut pk_to_actor_id: Vec<(PublicKey, ActorId, &str)> = vec![];
-    let api = get_new_client(&api, USERS_STR[0]).await;
+    let api = get_new_client(api, USERS_STR[0]).await;
     let id = api.get_actor_id();
     pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
 

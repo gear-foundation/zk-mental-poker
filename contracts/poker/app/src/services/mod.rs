@@ -7,8 +7,8 @@ mod curve;
 mod utils;
 pub mod verify;
 use crate::services::curve::{
-    calculate_agg_pub_key, substract_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
-    init_deck_and_card_map, verify_cards,
+    calculate_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
+    init_deck_and_card_map, substract_agg_pub_key, verify_cards,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;

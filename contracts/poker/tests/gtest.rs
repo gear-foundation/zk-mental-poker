@@ -223,7 +223,6 @@ async fn gtest_check_null_balance() {
     println!("participants {:?}", participants);
 }
 
-
 #[tokio::test]
 async fn gtest_one_player_left() {
     let (mut env, test_data) = TestEnvironment::setup().await;
@@ -323,7 +322,6 @@ async fn gtest_one_player_left() {
     println!("participants {:?}", participants);
 }
 
-
 #[tokio::test]
 async fn gtest_check_restart_and_turn() {
     let (mut env, test_data) = TestEnvironment::setup().await;
@@ -362,7 +360,7 @@ async fn gtest_delete_player() {
     env.register_players(&test_data).await;
     env.delete_player(USERS[1]).await;
     env.register(USERS[1], test_data.pks[1].1.clone()).await;
-    env.start_and_setup_game(&test_data).await;    
+    env.start_and_setup_game(&test_data).await;
 }
 
 #[tokio::test]
@@ -573,7 +571,6 @@ impl TestEnvironment {
             .unwrap()
     }
 
-
     async fn register_players(&mut self, test_data: &TestData) {
         println!("REGISTER");
 
@@ -588,10 +585,10 @@ impl TestEnvironment {
         }
 
         // Register players (skip index 0 as it's admin)
-        for i in 1..USERS.len() {
+        for (i, user) in USERS.iter().enumerate().skip(1) {
             self.service_client
                 .register("Player".to_string(), test_data.pks[i].1.clone())
-                .with_args(GTestArgs::new(USERS[i].into()))
+                .with_args(GTestArgs::new((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
