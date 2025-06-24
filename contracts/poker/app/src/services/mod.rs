@@ -8,7 +8,7 @@ mod utils;
 pub mod verify;
 use crate::services::curve::{
     calculate_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
-    init_deck_and_card_map, verify_cards,
+    init_deck_and_card_map, substract_agg_pub_key, verify_cards,
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
@@ -269,7 +269,7 @@ impl PokerService {
         ));
         storage.active_participants.add(msg_src);
 
-        storage.agg_pub_key = calculate_agg_pub_key(storage.agg_pub_key.clone(), pk.clone());
+        storage.agg_pub_key = calculate_agg_pub_key(&storage.agg_pub_key, &pk);
         self.emit_event(Event::Registered {
             participant_id: msg_src,
             pk,
@@ -459,7 +459,6 @@ impl PokerService {
                 storage.betting_bank = HashMap::new();
                 storage.all_in_players = Vec::new();
                 storage.already_invested_in_the_circle = HashMap::new();
-
                 storage.status = Status::Registration;
             }
         }
@@ -486,7 +485,7 @@ impl PokerService {
         if msg_src != storage.config.admin_id || player_id == storage.config.admin_id {
             panic("Access denied");
         }
-
+        sails_rs::gstd::debug!("here");
         if storage.status != Status::Registration
             && storage.status != Status::WaitingShuffleVerification
             && storage.status != Status::WaitingStart
@@ -504,6 +503,7 @@ impl PokerService {
                 .await
                 .expect("PTS: Error transfer points to player");
 
+            storage.agg_pub_key = substract_agg_pub_key(&storage.agg_pub_key, &participant.pk);
             storage.participants.retain(|(id, _)| *id != player_id);
             storage
                 .active_participants

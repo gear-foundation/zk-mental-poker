@@ -224,37 +224,6 @@ async fn gtest_check_null_balance() {
 }
 
 #[tokio::test]
-async fn gtest_check_restart_and_turn() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
-
-    env.register_players(&test_data).await;
-    env.start_and_setup_game(&test_data).await;
-
-    // preflop
-    env.run_actions(vec![
-        (USERS[2], poker_client::Action::Fold),
-        (USERS[3], poker_client::Action::Fold),
-        (USERS[4], poker_client::Action::Fold),
-        (USERS[5], poker_client::Action::Fold),
-        (USERS[0], poker_client::Action::Fold),
-    ])
-    .await;
-
-    env.verify_game_finished().await;
-    env.restart_game().await;
-    env.check_status(Status::Registration).await;
-
-    env.start_and_setup_game(&test_data).await;
-    env.check_status(Status::Play {
-        stage: poker_client::Stage::PreFlop,
-    })
-    .await;
-
-    env.run_actions(vec![(USERS[3], poker_client::Action::Call)])
-        .await;
-}
-
-#[tokio::test]
 async fn gtest_one_player_left() {
     let (mut env, test_data) = TestEnvironment::setup().await;
 
@@ -351,6 +320,47 @@ async fn gtest_one_player_left() {
         }
     }
     println!("participants {:?}", participants);
+}
+
+#[tokio::test]
+async fn gtest_check_restart_and_turn() {
+    let (mut env, test_data) = TestEnvironment::setup().await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+        (USERS[0], poker_client::Action::Fold),
+    ])
+    .await;
+
+    env.verify_game_finished().await;
+    env.restart_game().await;
+    env.check_status(Status::Registration).await;
+
+    env.start_and_setup_game(&test_data).await;
+    env.check_status(Status::Play {
+        stage: poker_client::Stage::PreFlop,
+    })
+    .await;
+
+    env.run_actions(vec![(USERS[3], poker_client::Action::Call)])
+        .await;
+}
+
+#[tokio::test]
+async fn gtest_delete_player() {
+    let (mut env, test_data) = TestEnvironment::setup().await;
+
+    env.register_players(&test_data).await;
+    env.delete_player(USERS[1]).await;
+    env.register(USERS[1], test_data.pks[1].1.clone()).await;
+    env.start_and_setup_game(&test_data).await;
 }
 
 #[tokio::test]
@@ -575,10 +585,10 @@ impl TestEnvironment {
         }
 
         // Register players (skip index 0 as it's admin)
-        for i in 1..USERS.len() {
+        for (i, user) in USERS.iter().enumerate().skip(1) {
             self.service_client
                 .register("Player".to_string(), test_data.pks[i].1.clone())
-                .with_args(GTestArgs::new(USERS[i].into()))
+                .with_args(GTestArgs::new((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -621,6 +631,23 @@ impl TestEnvironment {
     async fn restart_game(&mut self) {
         self.service_client
             .restart_game()
+            .send_recv(self.program_id)
+            .await
+            .unwrap();
+    }
+
+    async fn delete_player(&mut self, id: u64) {
+        self.service_client
+            .delete_player(id.into())
+            .send_recv(self.program_id)
+            .await
+            .unwrap();
+    }
+
+    async fn register(&mut self, id: u64, pk: PublicKey) {
+        self.service_client
+            .register("".to_string(), pk)
+            .with_args(GTestArgs::new(id.into()))
             .send_recv(self.program_id)
             .await
             .unwrap();
