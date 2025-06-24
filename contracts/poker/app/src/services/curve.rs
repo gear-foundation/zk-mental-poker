@@ -55,11 +55,19 @@ fn serialize_public_key(point: &EdwardsProjective) -> PublicKey {
     PublicKey { x, y, z }
 }
 
-pub fn calculate_agg_pub_key(pk1: PublicKey, pk2: PublicKey) -> PublicKey {
-    let point1 = deserialize_public_key(&pk1);
-    let point2 = deserialize_public_key(&pk2);
+pub fn calculate_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
+    let point1 = deserialize_public_key(pk1);
+    let point2 = deserialize_public_key(pk2);
 
     let result = point1 + point2;
+    serialize_public_key(&result)
+}
+
+pub fn substract_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
+    let point1 = deserialize_public_key(pk1);
+    let point2 = deserialize_public_key(pk2);
+
+    let result = point1 - point2;
     serialize_public_key(&result)
 }
 
