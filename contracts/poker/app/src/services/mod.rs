@@ -40,6 +40,7 @@ struct Storage {
     table_cards: Vec<EncryptedCard>,
     deck_position: usize,
     participants: Vec<(ActorId, Participant)>,
+    waiting_participants: Vec<(ActorId, Participant)>,
     agg_pub_key: PublicKey,
     // active_participants - players who can place bets
     // not to be confused with those who are in the game, as there are also all in players.
@@ -152,6 +153,10 @@ pub enum Event {
     GameCanceled,
     WaitingForCardsToBeDisclosed,
     WaitingForAllTableCardsToBeDisclosed,
+    RegisteredToTheNextRound {
+        participant_id: ActorId,
+        pk: PublicKey,
+    },
 }
 
 pub struct PokerService(());
@@ -181,6 +186,7 @@ impl PokerService {
                 config,
                 status: Status::Registration,
                 participants,
+                waiting_participants: Vec::new(),
                 active_participants,
                 round: 0,
                 betting: None,
@@ -236,9 +242,7 @@ impl PokerService {
     /// On success, updates participant data and emits a `Registered` event.
     pub async fn register(&mut self, player_name: String, pk: PublicKey) {
         let storage = self.get_mut();
-        if storage.status != Status::Registration {
-            panic("Wrong status");
-        }
+
         let msg_src = msg::source();
         if storage.participants.iter().any(|(id, _)| *id == msg_src) {
             panic!("Already registered");
@@ -259,22 +263,40 @@ impl PokerService {
             .await
             .expect("PTS: Error transfer points to contract");
 
-        storage.participants.push((
-            msg_src,
-            Participant {
-                name: player_name,
-                balance: storage.config.starting_bank,
-                pk: pk.clone(),
-            },
-        ));
-        storage.active_participants.add(msg_src);
+        if storage.status == Status::Registration {
+            storage.participants.push((
+                msg_src,
+                Participant {
+                    name: player_name,
+                    balance: storage.config.starting_bank,
+                    pk: pk.clone(),
+                },
+            ));
+            storage.active_participants.add(msg_src);
 
-        storage.agg_pub_key = calculate_agg_pub_key(&storage.agg_pub_key, &pk);
-        self.emit_event(Event::Registered {
-            participant_id: msg_src,
-            pk,
-        })
-        .expect("Event Invocation Error");
+            storage.agg_pub_key = calculate_agg_pub_key(&storage.agg_pub_key, &pk);
+            self.emit_event(Event::Registered {
+                participant_id: msg_src,
+                pk,
+            })
+            .expect("Event Invocation Error");
+        } else {
+            storage.waiting_participants.push((
+                msg_src,
+                Participant {
+                    name: player_name,
+                    balance: storage.config.starting_bank,
+                    pk: pk.clone(),
+                },
+            ));
+
+            storage.agg_pub_key = calculate_agg_pub_key(&storage.agg_pub_key, &pk);
+            self.emit_event(Event::RegisteredToTheNextRound {
+                participant_id: msg_src,
+                pk,
+            })
+            .expect("Event Invocation Error");
+        }
     }
 
     /// Cancels player registration and refunds their balance via PTS contract.
@@ -291,17 +313,18 @@ impl PokerService {
         if msg_src == storage.config.admin_id {
             panic("Access denied");
         }
-        match storage.status {
-            Status::Registration
-            | Status::WaitingShuffleVerification
-            | Status::Finished { .. }
-            | Status::WaitingStart => {}
-            _ => {
-                panic("Wrong status");
-            }
-        }
 
         if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == msg_src) {
+            match storage.status {
+                Status::Registration
+                | Status::WaitingShuffleVerification
+                | Status::Finished { .. }
+                | Status::WaitingStart => {}
+                _ => {
+                    panic("Wrong status");
+                }
+            }
+
             let request =
                 pts_io::Transfer::encode_call(exec::program_id(), msg_src, participant.balance);
 
@@ -315,6 +338,22 @@ impl PokerService {
                 .active_participants
                 .remove_and_update_first_index(&msg_src);
             storage.status = Status::Registration;
+        } else if let Some((_, participant)) = storage
+            .waiting_participants
+            .iter()
+            .find(|(id, _)| *id == msg_src)
+        {
+            let request =
+                pts_io::Transfer::encode_call(exec::program_id(), msg_src, participant.balance);
+
+            msg::send_bytes_for_reply(storage.pts_actor_id, request, 0, 0)
+                .expect("Error in async message to PTS contract")
+                .await
+                .expect("PTS: Error transfer points to player");
+
+            storage
+                .waiting_participants
+                .retain(|(id, _)| *id != msg_src);
         } else {
             panic("You are not player");
         }
@@ -340,6 +379,7 @@ impl PokerService {
                         .iter_mut()
                         .find(|(player_id, _)| player_id == id)
                         .expect("There is no such participant");
+                    sails_rs::gstd::debug!("here 4");
                     participant.balance += *bet;
                 }
             }
@@ -358,6 +398,10 @@ impl PokerService {
         storage.already_invested_in_the_circle = HashMap::new();
 
         storage.active_participants.clear_all();
+        storage
+            .participants
+            .append(&mut storage.waiting_participants);
+
         for (id, _) in storage.participants.iter() {
             storage.active_participants.add(*id);
         }
@@ -485,7 +529,6 @@ impl PokerService {
         if msg_src != storage.config.admin_id || player_id == storage.config.admin_id {
             panic("Access denied");
         }
-        sails_rs::gstd::debug!("here");
         if storage.status != Status::Registration
             && storage.status != Status::WaitingShuffleVerification
             && storage.status != Status::WaitingStart
@@ -848,6 +891,7 @@ impl PokerService {
             {
                 if storage.active_participants.len() <= 1 {
                     let prize = storage.betting_bank.values().sum();
+                    sails_rs::gstd::debug!("here 1");
                     participant.balance += prize;
                     storage.status = Status::Finished {
                         pots: vec![(prize, vec![next_or_last])],
@@ -986,6 +1030,7 @@ impl PokerService {
                 .find(|(id, _)| id == winner)
                 .expect("There is no such participant");
 
+            sails_rs::gstd::debug!("here 2");
             participant.balance += prize;
             storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
@@ -1120,6 +1165,7 @@ impl PokerService {
                     .iter_mut()
                     .find(|(id, _)| id == winner)
                     .expect("There is no such participant");
+                sails_rs::gstd::debug!("here 3");
                 participant.balance += *prize;
             }
 
@@ -1174,6 +1220,9 @@ impl PokerService {
 
     pub fn participants(&self) -> Vec<(ActorId, Participant)> {
         self.get().participants.clone()
+    }
+    pub fn waiting_participants(&self) -> Vec<(ActorId, Participant)> {
+        self.get().waiting_participants.clone()
     }
     pub fn active_participants(&self) -> &'static TurnManager<ActorId> {
         &self.get().active_participants

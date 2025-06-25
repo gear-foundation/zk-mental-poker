@@ -107,26 +107,27 @@ async fn test_basic_poker_workflow() {
         .recv(env.program_id)
         .await
         .unwrap();
+
+    println!("participants {:?}", participants);
+
     if let Status::Finished { pots } = result {
         assert_eq!(pots.len(), 1);
 
         let prize = pots[0].0;
         let winners = pots[0].1.clone();
-        for winner in winners.iter() {
-            participants.iter().for_each(|(id, info)| {
-                if winner == id {
-                    if info.balance != 1000 - 10 - 100 + prize {
-                        assert!(true, "Wrong balance!");
-                    }
-                } else {
-                    if info.balance != 1000 - 10 - 100 {
-                        assert!(true, "Wrong balance!");
-                    }
-                }
-            });
-        }
+
+        participants.iter().for_each(|(id, info)| {
+            if winners.contains(id) {
+                assert_eq!(
+                    info.balance,
+                    1000 - 10 - 100 + prize / winners.len() as u128,
+                    "Wrong balance!"
+                );
+            } else {
+                assert_eq!(info.balance, 1000 - 10 - 100, "Wrong balance!");
+            }
+        });
     }
-    println!("participants {:?}", participants);
 }
 
 #[tokio::test]
@@ -213,9 +214,11 @@ async fn gtest_check_null_balance() {
         for winner in winners.iter() {
             participants.iter().for_each(|(id, info)| {
                 if winner == id {
-                    if info.balance != prize {
-                        assert!(true, "Wrong balance!");
-                    }
+                    assert_eq!(
+                        info.balance,
+                        prize / winners.len() as u128,
+                        "Wrong balance!"
+                    );
                 }
             });
         }
@@ -308,13 +311,9 @@ async fn gtest_one_player_left() {
         for winner in winners.iter() {
             participants.iter().for_each(|(id, info)| {
                 if winner == id {
-                    if info.balance != 1000 - 10 - 100 + prize {
-                        assert!(true, "Wrong balance!");
-                    }
+                    assert_eq!(info.balance, 1000 - 10 - 100 + prize, "Wrong balance!");
                 } else {
-                    if info.balance != 1000 - 10 - 100 {
-                        assert!(true, "Wrong balance!");
-                    }
+                    assert_eq!(info.balance, 1000 - 10 - 100, "Wrong balance!");
                 }
             });
         }
@@ -426,6 +425,76 @@ async fn gtest_check_cancel_registration_and_turn() {
         .unwrap();
     println!("active_participants: {:?}", active_participants);
     assert_eq!(active_participants.first_index, 1);
+}
+
+#[tokio::test]
+async fn gtest_check_waiting_participants() {
+    let (mut env, test_data) = TestEnvironment::setup().await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    // TODO
+    // register players
+    // check length of the participants (old length)
+    // check length of the waiting participants state (1)
+
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+        (USERS[0], poker_client::Action::Fold),
+    ])
+    .await;
+
+    env.verify_game_finished().await;
+    env.restart_game().await;
+
+    // TODO
+    // check length of the participants (old length + 1)
+    // check length of the waiting participants state (0)
+
+    env.check_status(Status::Registration).await;
+
+    env.start_and_setup_game(&test_data).await;
+    env.check_status(Status::Play {
+        stage: poker_client::Stage::PreFlop,
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn gtest_check_cancel_registration_waiting_participants() {
+    let (mut env, test_data) = TestEnvironment::setup().await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    // TODO
+    // register players
+    // check length of the participants (old length)
+    // check length of the waiting participants state (1)
+
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+    ])
+    .await;
+
+    // env.service_client
+    //     .cancel_registration()
+    //     .with_args(GTestArgs::new(USERS[0].into()))
+    //     .send_recv(env.program_id)
+    //     .await
+    //     .unwrap();
+
+    // TODO
+    // check length of the waiting participants state (0)
 }
 
 struct TestEnvironment {
