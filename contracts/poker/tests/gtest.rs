@@ -11,6 +11,7 @@ use sails_rs::{
     gtest::{calls::*, System},
 };
 use std::ops::Range;
+use std::path::Path;
 mod utils_gclient;
 use utils_gclient::zk_loader::ZkLoaderData;
 use utils_gclient::{build_player_card_disclosure, init_deck_and_card_map};
@@ -37,7 +38,7 @@ type Gt = <Bls12_381 as Pairing>::TargetField;
 
 #[tokio::test]
 async fn test_basic_poker_workflow() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
@@ -132,7 +133,7 @@ async fn test_basic_poker_workflow() {
 
 #[tokio::test]
 async fn gtest_check_null_balance() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
@@ -228,7 +229,7 @@ async fn gtest_check_null_balance() {
 
 #[tokio::test]
 async fn gtest_one_player_left() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
@@ -323,7 +324,7 @@ async fn gtest_one_player_left() {
 
 #[tokio::test]
 async fn gtest_check_restart_and_turn() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
@@ -354,7 +355,7 @@ async fn gtest_check_restart_and_turn() {
 
 #[tokio::test]
 async fn gtest_delete_player() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.delete_player(USERS[1]).await;
@@ -364,7 +365,7 @@ async fn gtest_delete_player() {
 
 #[tokio::test]
 async fn gtest_check_cancel_registration_and_turn() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
@@ -429,15 +430,26 @@ async fn gtest_check_cancel_registration_and_turn() {
 
 #[tokio::test]
 async fn gtest_check_waiting_participants() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::SixPlayers).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
 
-    // TODO
-    // register players
     // check length of the participants (old length)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 6);
+
+    // new player registers
+    let new_player_id = 48;
+    env.remoting
+        .system()
+        .mint_to(new_player_id, 1_000_000_000_000_000);
+    let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
+    let new_player_pk = new_test_data.pks[5].1.clone();
+    env.register(new_player_id, new_player_pk).await;
     // check length of the waiting participants state (1)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 1);
 
     // preflop
     env.run_actions(vec![
@@ -452,13 +464,18 @@ async fn gtest_check_waiting_participants() {
     env.verify_game_finished().await;
     env.restart_game().await;
 
-    // TODO
     // check length of the participants (old length + 1)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 7);
     // check length of the waiting participants state (0)
-
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 0);
     env.check_status(Status::Registration).await;
 
-    env.start_and_setup_game(&test_data).await;
+    // delete player
+    env.delete_player(USERS[5]).await;
+
+    env.start_and_setup_game(&new_test_data).await;
     env.check_status(Status::Play {
         stage: poker_client::Stage::PreFlop,
     })
@@ -467,15 +484,27 @@ async fn gtest_check_waiting_participants() {
 
 #[tokio::test]
 async fn gtest_check_cancel_registration_waiting_participants() {
-    let (mut env, test_data) = TestEnvironment::setup().await;
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
     env.register_players(&test_data).await;
     env.start_and_setup_game(&test_data).await;
 
-    // TODO
-    // register players
     // check length of the participants (old length)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 6);
+
     // check length of the waiting participants state (1)
+    let new_player_id = 48;
+    env.remoting
+        .system()
+        .mint_to(new_player_id, 1_000_000_000_000_000);
+    let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
+    let new_player_pk = new_test_data.pks[5].1.clone();
+    env.register(new_player_id, new_player_pk).await;
+
+    // check length of the waiting participants state (1)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 1);
 
     // preflop
     env.run_actions(vec![
@@ -486,18 +515,20 @@ async fn gtest_check_cancel_registration_waiting_participants() {
     ])
     .await;
 
-    // env.service_client
-    //     .cancel_registration()
-    //     .with_args(GTestArgs::new(USERS[0].into()))
-    //     .send_recv(env.program_id)
-    //     .await
-    //     .unwrap();
+    env.service_client
+        .cancel_registration()
+        .with_args(GTestArgs::new(new_player_id.into()))
+        .send_recv(env.program_id)
+        .await
+        .unwrap();
 
-    // TODO
     // check length of the waiting participants state (0)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 0);
 }
 
 struct TestEnvironment {
+    remoting: GTestRemoting,
     pts_id: ActorId,
     program_id: ActorId,
     service_client: poker_client::Poker<GTestRemoting>,
@@ -508,44 +539,74 @@ struct TestData {
     shuffle_proofs: Vec<poker_client::VerificationVariables>,
     encrypted_deck: Vec<poker_client::EncryptedCard>,
     decrypt_proofs: Vec<poker_client::VerificationVariables>,
-    table_cards_proofs: Vec<(
-        poker_client::PublicKey,
-        (
-            Vec<(poker_client::EncryptedCard, [Vec<u8>; 3])>,
-            Vec<poker_client::VerificationVariables>,
-        ),
-    )>,
-    player_cards: Vec<(
-        poker_client::PublicKey,
-        Vec<utils_gclient::zk_loader::DecryptedCardWithProof>,
-    )>,
+    table_cards_proofs: Option<
+        Vec<(
+            poker_client::PublicKey,
+            (
+                Vec<(poker_client::EncryptedCard, [Vec<u8>; 3])>,
+                Vec<poker_client::VerificationVariables>,
+            ),
+        )>,
+    >,
+    player_cards: Option<
+        Vec<(
+            poker_client::PublicKey,
+            Vec<utils_gclient::zk_loader::DecryptedCardWithProof>,
+        )>,
+    >,
+}
+
+pub enum TestDataProfile {
+    Basic,
+    SixPlayers,
+    SixPlayersNew,
 }
 
 impl TestData {
-    fn load() -> Self {
+    pub fn load_from_profile(profile: TestDataProfile) -> Self {
+        let prefix = match profile {
+            TestDataProfile::Basic => "tests/test_data_gtest/basic",
+            TestDataProfile::SixPlayers => "tests/test_data_gtest/6_players_shuffle",
+            TestDataProfile::SixPlayersNew => "tests/test_data_gtest/6_players_new_shuffle",
+        };
+
+        let table_path = format!("{}/table_decryptions.json", prefix);
+        let player_path = format!("{}/player_decryptions.json", prefix);
+
+        let table_cards_proofs = if Path::new(&table_path).exists() {
+            Some(ZkLoaderData::load_table_cards_proofs(&table_path))
+        } else {
+            None
+        };
+
+        let player_cards = if Path::new(&player_path).exists() {
+            Some(ZkLoaderData::load_cards_with_proofs(&player_path))
+        } else {
+            None
+        };
+
         Self {
-            pks: ZkLoaderData::load_player_public_keys("tests/test_data_gtest/player_pks.json"),
-            shuffle_proofs: ZkLoaderData::load_shuffle_proofs(
-                "tests/test_data_gtest/shuffle_proofs.json",
-            ),
-            encrypted_deck: ZkLoaderData::load_encrypted_table_cards(
-                "tests/test_data_gtest/encrypted_deck.json",
-            ),
-            decrypt_proofs: ZkLoaderData::load_partial_decrypt_proofs(
-                "tests/test_data_gtest/partial_decrypt_proofs.json",
-            ),
-            table_cards_proofs: ZkLoaderData::load_table_cards_proofs(
-                "tests/test_data_gtest/table_decryptions.json",
-            ),
-            player_cards: ZkLoaderData::load_cards_with_proofs(
-                "tests/test_data_gtest/player_decryptions.json",
-            ),
+            pks: ZkLoaderData::load_player_public_keys(&format!("{}/player_pks.json", prefix)),
+            shuffle_proofs: ZkLoaderData::load_shuffle_proofs(&format!(
+                "{}/shuffle_proofs.json",
+                prefix
+            )),
+            encrypted_deck: ZkLoaderData::load_encrypted_table_cards(&format!(
+                "{}/encrypted_deck.json",
+                prefix
+            )),
+            decrypt_proofs: ZkLoaderData::load_partial_decrypt_proofs(&format!(
+                "{}/partial_decrypt_proofs.json",
+                prefix
+            )),
+            table_cards_proofs,
+            player_cards,
         }
     }
 }
 
 impl TestEnvironment {
-    async fn setup() -> (Self, TestData) {
+    async fn setup(data: TestDataProfile) -> (Self, TestData) {
         let system = System::new();
         system.init_logger();
 
@@ -564,7 +625,7 @@ impl TestEnvironment {
         let remoting = GTestRemoting::new(system, USERS[0].into());
 
         // Load test data
-        let test_data = TestData::load();
+        let test_data = TestData::load_from_profile(data);
 
         // Setup PTS system
         let pts_id = Self::setup_pts_system(&remoting).await;
@@ -584,6 +645,7 @@ impl TestEnvironment {
             .unwrap();
 
         let env = TestEnvironment {
+            remoting,
             pts_id,
             program_id,
             service_client,
@@ -714,6 +776,12 @@ impl TestEnvironment {
     }
 
     async fn register(&mut self, id: u64, pk: PublicKey) {
+        self.pts_service_client
+            .get_accural()
+            .with_args(GTestArgs::new(id.into()))
+            .send_recv(self.pts_id)
+            .await
+            .unwrap();
         self.service_client
             .register("".to_string(), pk)
             .with_args(GTestArgs::new(id.into()))
@@ -735,8 +803,12 @@ impl TestEnvironment {
     }
 
     pub async fn reveal_table_cards(&mut self, test_data: &TestData, range: Range<usize>) {
+        let table_cards_proofs = test_data
+            .table_cards_proofs
+            .as_ref()
+            .expect("No table_cards_proofs for this data profile");
         for (i, user) in USERS.iter().enumerate() {
-            let proofs: Vec<_> = test_data.table_cards_proofs[i].1 .1[range.clone()].to_vec();
+            let proofs: Vec<_> = table_cards_proofs[i].1 .1[range.clone()].to_vec();
             self.service_client
                 .submit_table_partial_decryptions(proofs)
                 .with_args(GTestArgs::new((*user).into()))
@@ -748,8 +820,12 @@ impl TestEnvironment {
 
     async fn reveal_player_cards(&mut self, test_data: &TestData) {
         println!("Players reveal their cards..");
+        let player_cards = test_data
+            .player_cards
+            .as_ref()
+            .expect("No player_cards for this data profile");
         let (_, card_map) = init_deck_and_card_map();
-        let hands = build_player_card_disclosure(test_data.player_cards.clone(), &card_map);
+        let hands = build_player_card_disclosure(player_cards.clone(), &card_map);
 
         for i in 0..USERS.len() {
             let proofs = hands[i].1.clone();
@@ -785,6 +861,28 @@ impl TestEnvironment {
             "Game should be finished"
         );
         result
+    }
+
+    async fn participants(&self) -> Vec<(ActorId, poker_client::Participant)> {
+        let participants = self
+            .service_client
+            .participants()
+            .recv(self.program_id)
+            .await
+            .unwrap();
+
+        participants
+    }
+
+    async fn waiting_participants(&self) -> Vec<(ActorId, poker_client::Participant)> {
+        let participants = self
+            .service_client
+            .waiting_participants()
+            .recv(self.program_id)
+            .await
+            .unwrap();
+
+        participants
     }
 
     async fn check_status(&mut self, expected_status: Status) {
