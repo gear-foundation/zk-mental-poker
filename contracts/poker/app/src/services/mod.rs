@@ -379,7 +379,6 @@ impl PokerService {
                         .iter_mut()
                         .find(|(player_id, _)| player_id == id)
                         .expect("There is no such participant");
-                    sails_rs::gstd::debug!("here 4");
                     participant.balance += *bet;
                 }
             }
@@ -891,7 +890,6 @@ impl PokerService {
             {
                 if storage.active_participants.len() <= 1 {
                     let prize = storage.betting_bank.values().sum();
-                    sails_rs::gstd::debug!("here 1");
                     participant.balance += prize;
                     storage.status = Status::Finished {
                         pots: vec![(prize, vec![next_or_last])],
@@ -910,8 +908,6 @@ impl PokerService {
                 panic!("No active players");
             }
         } else if betting.turn != player {
-            sails_rs::gstd::debug!("betting.turn {:?}", betting.turn);
-            sails_rs::gstd::debug!("player {:?}", player);
             panic!("Not your turn!");
         }
         // Process the player's action
@@ -1030,7 +1026,6 @@ impl PokerService {
                 .find(|(id, _)| id == winner)
                 .expect("There is no such participant");
 
-            sails_rs::gstd::debug!("here 2");
             participant.balance += prize;
             storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
@@ -1165,7 +1160,6 @@ impl PokerService {
                     .iter_mut()
                     .find(|(id, _)| id == winner)
                     .expect("There is no such participant");
-                sails_rs::gstd::debug!("here 3");
                 participant.balance += *prize;
             }
 
