@@ -207,7 +207,6 @@ async fn gtest_check_null_balance() {
         .recv(env.program_id)
         .await
         .unwrap();
-    assert_eq!(participants.len(), 2);
 
     if let Status::Finished { pots } = result {
         let prize = pots[0].0;
@@ -224,7 +223,15 @@ async fn gtest_check_null_balance() {
             });
         }
     }
-    println!("participants {:?}", participants);
+
+    env.restart_game().await;
+    let participants = env
+        .service_client
+        .participants()
+        .recv(env.program_id)
+        .await
+        .unwrap();
+    assert_eq!(participants.len(), 2);
 }
 
 #[tokio::test]

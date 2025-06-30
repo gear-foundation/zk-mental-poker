@@ -313,6 +313,7 @@ impl Storage {
         self.betting_bank = HashMap::new();
         self.all_in_players = Vec::new();
         self.already_invested_in_the_circle = HashMap::new();
+        self.betting = None;
     }
 
     pub fn refund_bets_to_players(&mut self) {
@@ -433,6 +434,15 @@ impl PokerService {
         }
 
         storage.reset_for_new_game();
+
+        storage.participants.retain(|(id, info)| {
+            if info.balance == 0 {
+                self.emit_event(Event::RegistrationCanceled { player_id: *id })
+                    .expect("Event Error");
+                return false;
+            }
+            true
+        });
 
         storage.active_participants.clear_all();
         storage
@@ -872,7 +882,6 @@ impl PokerService {
                     storage.status = Status::Finished {
                         pots: vec![(prize, vec![next_or_last])],
                     };
-                    storage.participants.retain(|(_, info)| info.balance != 0);
                     storage.betting = None;
                     self.emit_event(Event::Finished {
                         pots: vec![(prize, vec![next_or_last])],
@@ -1005,7 +1014,6 @@ impl PokerService {
                 .expect("There is no such participant");
 
             participant.balance += prize;
-            storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished {
                 pots: vec![(prize, vec![*winner])],
             };
@@ -1141,7 +1149,6 @@ impl PokerService {
                 participant.balance += *prize;
             }
 
-            storage.participants.retain(|(_, info)| info.balance != 0);
             storage.status = Status::Finished { pots: pots.clone() };
             self.emit_event(Event::Finished { pots })
                 .expect("Event Error");
