@@ -335,7 +335,7 @@ impl Storage {
 fn get_player(session_for_account: &Option<ActorId>) -> ActorId {
     let msg_src = msg::source();
     let sessions = SessionStorage::get_session_map();
-    let player = match session_for_account {
+    match session_for_account {
         Some(account) => {
             let session = sessions
                 .get(account)
@@ -351,8 +351,7 @@ fn get_player(session_for_account: &Option<ActorId>) -> ActorId {
             *account
         }
         None => msg_src,
-    };
-    player
+    }
 }
 
 #[sails_rs::service(events = Event)]
