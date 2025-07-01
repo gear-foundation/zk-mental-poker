@@ -7,7 +7,7 @@ use ark_serialize::CanonicalSerialize;
 use num_bigint::BigUint;
 use num_traits::Num;
 use poker_client::{
-    EncryptedCard, ProofBytes, PublicKey, VerificationVariables, VerifyingKeyBytes,
+    EncryptedCard, ProofBytes, VerificationVariables, VerifyingKeyBytes, ZkPublicKey,
 };
 use serde::Deserialize;
 use std::fs;
@@ -130,7 +130,7 @@ impl ZkLoaderData {
         Self::construct_verifying_key(&vkey)
     }
 
-    pub fn load_player_public_keys(path: &str) -> Vec<(usize, PublicKey)> {
+    pub fn load_player_public_keys(path: &str) -> Vec<(usize, ZkPublicKey)> {
         Self::read_json::<Vec<PublicKeyJson>>(path)
             .into_iter()
             .map(|pk| (pk.index, ECPointConverter::to_public_key(&pk.pk)))
@@ -147,7 +147,7 @@ impl ZkLoaderData {
     pub fn load_table_cards_proofs(
         path: &str,
     ) -> Vec<(
-        PublicKey,
+        ZkPublicKey,
         (
             Vec<(EncryptedCard, [Vec<u8>; 3])>,
             Vec<VerificationVariables>,
@@ -160,7 +160,7 @@ impl ZkLoaderData {
             .collect()
     }
 
-    pub fn load_cards_with_proofs(path: &str) -> Vec<(PublicKey, Vec<DecryptedCardWithProof>)> {
+    pub fn load_cards_with_proofs(path: &str) -> Vec<(ZkPublicKey, Vec<DecryptedCardWithProof>)> {
         let parsed: Vec<JsonDecryptionEntry> = Self::read_json(path);
         parsed
             .into_iter()
@@ -245,7 +245,7 @@ impl ZkLoaderData {
     fn process_player_decryptions(
         entry: PlayerDecryptions,
     ) -> (
-        PublicKey,
+        ZkPublicKey,
         (
             Vec<(EncryptedCard, [Vec<u8>; 3])>,
             Vec<VerificationVariables>,
@@ -272,7 +272,7 @@ impl ZkLoaderData {
 
     fn process_card_decryption_entry(
         entry: JsonDecryptionEntry,
-    ) -> (PublicKey, Vec<DecryptedCardWithProof>) {
+    ) -> (ZkPublicKey, Vec<DecryptedCardWithProof>) {
         let player_key = ECPointConverter::to_public_key(&entry.public_key);
         let cards = entry
             .cards
@@ -317,8 +317,8 @@ impl ZkLoaderData {
 struct ECPointConverter;
 
 impl ECPointConverter {
-    fn to_public_key(point: &ECPointJson) -> PublicKey {
-        PublicKey {
+    fn to_public_key(point: &ECPointJson) -> ZkPublicKey {
+        ZkPublicKey {
             x: Self::decimal_str_to_bytes_32(&point.x),
             y: Self::decimal_str_to_bytes_32(&point.y),
             z: Self::decimal_str_to_bytes_32(&point.z),

@@ -1,4 +1,4 @@
-use crate::services::{Card, EncryptedCard, PublicKey, Suit, VerificationVariables};
+use crate::services::{Card, EncryptedCard, Suit, VerificationVariables, ZkPublicKey};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
 use ark_ff::{BigInteger, One, PrimeField, Zero};
@@ -23,7 +23,7 @@ pub fn serialize_bandersnatch_coords(point: &EdwardsProjective) -> [Vec<u8>; 3] 
     ]
 }
 
-fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
+fn deserialize_public_key(pk: &ZkPublicKey) -> EdwardsProjective {
     let x = Fq::from_le_bytes_mod_order(&pk.x);
     let y = Fq::from_le_bytes_mod_order(&pk.y);
     let z = Fq::from_le_bytes_mod_order(&pk.z);
@@ -32,7 +32,7 @@ fn deserialize_public_key(pk: &PublicKey) -> EdwardsProjective {
     EdwardsProjective::new(x, y, t, z)
 }
 
-fn serialize_public_key(point: &EdwardsProjective) -> PublicKey {
+fn serialize_public_key(point: &EdwardsProjective) -> ZkPublicKey {
     let x = point
         .x
         .into_bigint()
@@ -52,10 +52,10 @@ fn serialize_public_key(point: &EdwardsProjective) -> PublicKey {
         .try_into()
         .expect("z not 32 bytes");
 
-    PublicKey { x, y, z }
+    ZkPublicKey { x, y, z }
 }
 
-pub fn calculate_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
+pub fn calculate_agg_pub_key(pk1: &ZkPublicKey, pk2: &ZkPublicKey) -> ZkPublicKey {
     let point1 = deserialize_public_key(pk1);
     let point2 = deserialize_public_key(pk2);
 
@@ -63,7 +63,7 @@ pub fn calculate_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
     serialize_public_key(&result)
 }
 
-pub fn substract_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
+pub fn substract_agg_pub_key(pk1: &ZkPublicKey, pk2: &ZkPublicKey) -> ZkPublicKey {
     let point1 = deserialize_public_key(pk1);
     let point2 = deserialize_public_key(pk2);
 
@@ -71,7 +71,7 @@ pub fn substract_agg_pub_key(pk1: &PublicKey, pk2: &PublicKey) -> PublicKey {
     serialize_public_key(&result)
 }
 
-pub fn compare_public_keys(pk1: &PublicKey, pk2: &PublicKey) -> bool {
+pub fn compare_public_keys(pk1: &ZkPublicKey, pk2: &ZkPublicKey) -> bool {
     let x1 = Fq::from_le_bytes_mod_order(&pk1.x);
     let y1 = Fq::from_le_bytes_mod_order(&pk1.y);
     let z1 = Fq::from_le_bytes_mod_order(&pk1.z);

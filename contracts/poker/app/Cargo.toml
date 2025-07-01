@@ -12,6 +12,7 @@ ark-ed-on-bls12-381-bandersnatch = { workspace = true, default-features = false 
 ark-ff = { workspace = true, default-features = false }
 ark-ec = { workspace = true, default-features = false }
 pts-client = { path = "../../pts/client"}
+session-service.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

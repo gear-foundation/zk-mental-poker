@@ -4,6 +4,7 @@ use sails_rs::gstd::{exec, msg};
 use sails_rs::prelude::*;
 use utils::*;
 mod curve;
+pub mod session;
 mod utils;
 pub mod verify;
 use crate::services::curve::{
@@ -12,6 +13,7 @@ use crate::services::curve::{
 };
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
+use session::Storage as SessionStorage;
 pub use verify::{
     BatchVerificationContext, ShuffleChainValidator, VerificationVariables, VerifyingKeyBytes,
 };
@@ -41,7 +43,7 @@ struct Storage {
     deck_position: usize,
     participants: Vec<(ActorId, Participant)>,
     waiting_participants: Vec<(ActorId, Participant)>,
-    agg_pub_key: PublicKey,
+    agg_pub_key: ZkPublicKey,
     // active_participants - players who can place bets
     // not to be confused with those who are in the game, as there are also all in players.
     active_participants: TurnManager<ActorId>,
@@ -87,7 +89,7 @@ pub enum Action {
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
 pub struct Config {
-    admin_id: ActorId,
+    pub admin_id: ActorId,
     admin_name: String,
     lobby_name: String,
     small_blind: u128,
@@ -102,13 +104,13 @@ pub struct Config {
 pub struct Participant {
     name: String,
     balance: u128,
-    pk: PublicKey,
+    pk: ZkPublicKey,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
-pub struct PublicKey {
+pub struct ZkPublicKey {
     pub x: [u8; 32],
     pub y: [u8; 32],
     pub z: [u8; 32],
@@ -122,7 +124,7 @@ static mut STORAGE: Option<Storage> = None;
 pub enum Event {
     Registered {
         participant_id: ActorId,
-        pk: PublicKey,
+        pk: ZkPublicKey,
     },
     PlayerDeleted {
         player_id: ActorId,
@@ -155,7 +157,7 @@ pub enum Event {
     WaitingForAllTableCardsToBeDisclosed,
     RegisteredToTheNextRound {
         participant_id: ActorId,
-        pk: PublicKey,
+        pk: ZkPublicKey,
     },
 }
 
@@ -165,7 +167,7 @@ impl PokerService {
     pub fn init(
         config: Config,
         pts_actor_id: ActorId,
-        pk: PublicKey,
+        pk: ZkPublicKey,
         vk_shuffle_bytes: VerifyingKeyBytes,
         vk_decrypt_bytes: VerifyingKeyBytes,
     ) -> Self {
@@ -330,6 +332,29 @@ impl Storage {
     }
 }
 
+fn get_player(session_for_account: &Option<ActorId>) -> ActorId {
+    let msg_src = msg::source();
+    let sessions = SessionStorage::get_session_map();
+    let player = match session_for_account {
+        Some(account) => {
+            let session = sessions
+                .get(account)
+                .expect("This account has no valid session");
+            assert!(
+                session.expires > exec::block_timestamp(),
+                "The session has already expired"
+            );
+            assert_eq!(
+                session.key, msg_src,
+                "The account is not approved for this session"
+            );
+            *account
+        }
+        None => msg_src,
+    };
+    player
+}
+
 #[sails_rs::service(events = Event)]
 #[allow(clippy::new_without_default)]
 impl PokerService {
@@ -344,11 +369,15 @@ impl PokerService {
     ///
     /// Sends a message to the PTS contract (pts_actor_id) to transfer points to this contract.
     /// On success, updates participant data and emits a `Registered` event.
-    pub async fn register(&mut self, player_name: String, pk: PublicKey) {
+    pub async fn register(
+        &mut self,
+        player_name: String,
+        pk: ZkPublicKey,
+        session_for_account: Option<ActorId>,
+    ) {
         let storage = self.get_mut();
-
-        let msg_src = msg::source();
-        if storage.participants.iter().any(|(id, _)| *id == msg_src) {
+        let player_id = get_player(&session_for_account);
+        if storage.participants.iter().any(|(id, _)| *id == player_id) {
             panic!("Already registered");
         }
 
@@ -358,7 +387,7 @@ impl PokerService {
 
         pts_transfer(
             storage.pts_actor_id,
-            msg_src,
+            player_id,
             exec::program_id(),
             storage.config.starting_bank,
         )
@@ -373,20 +402,20 @@ impl PokerService {
 
         match storage.status {
             Status::Registration => {
-                storage.participants.push((msg_src, participant));
-                storage.active_participants.add(msg_src);
+                storage.participants.push((player_id, participant));
+                storage.active_participants.add(player_id);
 
                 self.emit_event(Event::Registered {
-                    participant_id: msg_src,
+                    participant_id: player_id,
                     pk,
                 })
                 .expect("Event Invocation Error");
             }
             _ => {
-                storage.waiting_participants.push((msg_src, participant));
+                storage.waiting_participants.push((player_id, participant));
 
                 self.emit_event(Event::RegisteredToTheNextRound {
-                    participant_id: msg_src,
+                    participant_id: player_id,
                     pk,
                 })
                 .expect("Event Invocation Error");
@@ -402,18 +431,18 @@ impl PokerService {
     ///
     /// Sends a transfer request to PTS contract to return points to the player.
     /// Removes player data and emits `RegistrationCanceled` event on success.
-    pub async fn cancel_registration(&mut self) {
+    pub async fn cancel_registration(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
-        let msg_src = msg::source();
+        let player_id = get_player(&session_for_account);
 
-        if msg_src == storage.config.admin_id {
+        if player_id == storage.config.admin_id {
             panic!("Access denied");
         }
 
-        if let Some(balance) = remove_participant_if_registered(storage, msg_src).await {
-            pts_transfer(storage.pts_actor_id, exec::program_id(), msg_src, balance).await;
+        if let Some(balance) = remove_participant_if_registered(storage, player_id).await {
+            pts_transfer(storage.pts_actor_id, exec::program_id(), player_id, balance).await;
 
-            self.emit_event(Event::RegistrationCanceled { player_id: msg_src })
+            self.emit_event(Event::RegistrationCanceled { player_id })
                 .expect("Event Error");
         } else {
             panic!("You are not registered");
@@ -424,9 +453,10 @@ impl PokerService {
     /// Panics if caller is not admin.
     /// Resets game to WaitingShuffleVerification (if full) or Registration status.
     /// Emits GameRestarted event with new status.
-    pub fn restart_game(&mut self) {
+    pub fn restart_game(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
-        if msg::source() != storage.config.admin_id {
+        let player_id = get_player(&session_for_account);
+        if player_id != storage.config.admin_id {
             panic("Access denied");
         }
         if !matches!(storage.status, Status::Finished { .. }) {
@@ -473,10 +503,10 @@ impl PokerService {
     /// 3. Emits Killed event and transfers remaining funds to admin
     ///
     /// WARNING: Irreversible operation
-    pub async fn kill(&mut self) {
+    pub async fn kill(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get();
-        let msg_src = msg::source();
-        if msg_src != storage.config.admin_id {
+        let player_id = get_player(&session_for_account);
+        if player_id != storage.config.admin_id {
             panic("Access denied");
         }
         match storage.status {
@@ -518,10 +548,10 @@ impl PokerService {
         exec::exit(storage.config.admin_id);
     }
 
-    pub async fn cancel_game(&mut self) {
+    pub async fn cancel_game(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
-        let msg_src = msg::source();
-        if msg_src != storage.config.admin_id {
+        let player_id = get_player(&session_for_account);
+        if player_id != storage.config.admin_id {
             panic("Access denied");
         }
         match storage.status {
@@ -551,10 +581,15 @@ impl PokerService {
     /// 2. Removes player from all participant lists
     /// 3. Resets status to Registration
     /// 4. Emits PlayerDeleted event
-    pub async fn delete_player(&mut self, player_id: ActorId) {
+    pub async fn delete_player(
+        &mut self,
+        player_id: ActorId,
+        session_for_account: Option<ActorId>,
+    ) {
         let storage = self.get_mut();
-        let msg_src = msg::source();
-        if msg_src != storage.config.admin_id || player_id == storage.config.admin_id {
+        if get_player(&session_for_account) != storage.config.admin_id
+            || player_id == storage.config.admin_id
+        {
             panic("Access denied");
         }
         if storage.status != Status::Registration
@@ -632,10 +667,9 @@ impl PokerService {
     /// 3. Updates game status and emits GameStarted event
     ///
     /// Note: Handles edge cases where players can't cover blinds
-    pub async fn start_game(&mut self) {
+    pub async fn start_game(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
-        let msg_src = msg::source();
-        if msg_src != storage.config.admin_id {
+        if get_player(&session_for_account) != storage.config.admin_id {
             panic("Access denied");
         }
         if storage.participants.len() < 2 {
@@ -733,9 +767,10 @@ impl PokerService {
     pub async fn submit_table_partial_decryptions(
         &mut self,
         instances: Vec<VerificationVariables>,
+        session_for_account: Option<ActorId>,
     ) {
         let storage = self.get_mut();
-        let sender = msg::source();
+        let player_id = get_player(&session_for_account);
         let (base_index, expected_count, next_stage) = match &storage.status {
             Status::Play { stage } => match stage {
                 Stage::WaitingTableCardsAfterPreFlop => (0, 3, Some(Stage::Flop)),
@@ -764,7 +799,7 @@ impl PokerService {
             .verify_batch(instances)
             .await;
 
-        if !storage.participants.iter().any(|(id, _)| *id == sender) {
+        if !storage.participants.iter().any(|(id, _)| *id == player_id) {
             panic!("Not participant");
         }
 
@@ -780,7 +815,7 @@ impl PokerService {
                 .partial_table_card_decryptions
                 .entry(card)
                 .or_default()
-                .add(sender, decryption);
+                .add(player_id, decryption);
         }
 
         let first_card = &storage.table_cards[base_index];
@@ -842,8 +877,8 @@ impl PokerService {
     /// - Stage transitions
     ///
     /// Emits TurnIsMade and NextStage events
-    pub fn turn(&mut self, action: Action) {
-        let player = msg::source();
+    pub fn turn(&mut self, action: Action, session_for_account: Option<ActorId>) {
+        let player = get_player(&session_for_account);
         let storage = self.get_mut();
 
         let Status::Play { stage } = &mut storage.status else {
@@ -1084,12 +1119,16 @@ impl PokerService {
             .expect("Event Error");
     }
 
-    pub async fn card_disclosure(&mut self, instances: Vec<(Card, VerificationVariables)>) {
+    pub async fn card_disclosure(
+        &mut self,
+        instances: Vec<(Card, VerificationVariables)>,
+        session_for_account: Option<ActorId>,
+    ) {
         let storage = self.get_mut();
         // if storage.status != Status::WaitingForCardsToBeDisclosed {
         //     panic!("Wrong status")
         // }
-        let player = msg::source();
+        let player = get_player(&session_for_account);
 
         let partially_decrypted_cards = storage
             .partially_decrypted_cards

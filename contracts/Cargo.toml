@@ -25,6 +25,7 @@ gear-core = "=1.8.0"
 sails-rs = "=0.8.0"
 sails-idl-gen = "=0.8.0"
 sails-client-gen = "=0.8.0"
+session-service = { git = "https://github.com/gear-foundation/signless-gasless-session-service.git" }
 log = "*"
 env_logger = "*"
 tokio = { version = "1.41", features = ["rt", "macros"] }

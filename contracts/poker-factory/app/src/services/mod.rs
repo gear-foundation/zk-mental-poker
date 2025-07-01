@@ -1,5 +1,5 @@
 use gstd::prog::ProgramGenerator;
-use poker_client::PublicKey;
+use poker_client::{SignatureData, ZkPublicKey};
 use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
@@ -50,7 +50,7 @@ pub enum Event {
     LobbyCreated {
         lobby_address: ActorId,
         admin: ActorId,
-        pk: PublicKey,
+        pk: ZkPublicKey,
         lobby_config: LobbyConfig,
     },
     LobbyDeleted {
@@ -87,6 +87,14 @@ impl PokerFactoryService {
     }
 }
 
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct Signature {
+    signature_data: SignatureData,
+    signature: Option<Vec<u8>>,
+}
+
 #[sails_rs::service(events = Event)]
 #[allow(clippy::new_without_default)]
 impl PokerFactoryService {
@@ -106,7 +114,12 @@ impl PokerFactoryService {
     /// 3. Sets lobby as PTS admin
     /// 4. Transfers starting bank to lobby
     /// 5. Stores lobby info and emits LobbyCreated event
-    pub async fn create_lobby(&mut self, init_lobby: LobbyConfig, pk: PublicKey) {
+    pub async fn create_lobby(
+        &mut self,
+        init_lobby: LobbyConfig,
+        pk: ZkPublicKey,
+        session: Option<Signature>,
+    ) {
         let storage = self.get_mut();
         let msg_src = msg::source();
 
@@ -137,6 +150,7 @@ impl PokerFactoryService {
             pk.encode(),
             storage.vk_shuffle_bytes.clone(),
             storage.vk_decrypt_bytes.clone(),
+            session.encode(),
         ]
         .concat();
         let create_program_future = ProgramGenerator::create_program_bytes_with_gas_for_reply(
