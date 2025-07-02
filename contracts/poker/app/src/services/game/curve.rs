@@ -1,4 +1,4 @@
-use crate::services::{Card, EncryptedCard, Suit, VerificationVariables, ZkPublicKey};
+use crate::services::game::{Card, EncryptedCard, Suit, VerificationVariables, ZkPublicKey};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
 use ark_ff::{BigInteger, One, PrimeField, Zero};

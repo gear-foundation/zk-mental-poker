@@ -2,7 +2,7 @@
 use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::ProgramId;
-use poker_client::{Card, ServicesConfig, Suit, ZkPublicKey};
+use poker_client::{Card, GameConfig, Suit, ZkPublicKey};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
 use ark_ec::AffineRepr;
@@ -85,7 +85,7 @@ pub async fn init(
     assert!(listener.message_processed(message_id).await?.succeed());
 
     // POKER
-    let config = ServicesConfig {
+    let config = GameConfig {
         time_per_move_ms: 30_000,
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),

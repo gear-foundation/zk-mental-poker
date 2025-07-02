@@ -1,5 +1,5 @@
-use crate::services::EdwardsProjective;
-use crate::services::{
+use crate::services::game::EdwardsProjective;
+use crate::services::game::{
     EncryptedCard, ZkPublicKey,
     curve::{compare_points, compare_projective_and_coords, compare_public_keys},
 };

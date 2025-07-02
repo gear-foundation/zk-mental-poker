@@ -1,3 +1,4 @@
+#![allow(static_mut_refs)]
 use sails_rs::prelude::*;
 use session_service::*;
 

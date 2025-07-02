@@ -3,7 +3,7 @@ use gtest::WasmProgram;
 use hex_literal::hex;
 
 use poker_client::ZkPublicKey;
-use poker_client::{traits::*, ServicesConfig, SessionConfig, Stage, Status};
+use poker_client::{traits::*, GameConfig, SessionConfig, Stage, Status};
 use pts_client::traits::{Pts, PtsFactory};
 use sails_rs::ActorId;
 use sails_rs::{
@@ -690,7 +690,7 @@ impl TestEnvironment {
 
         program_factory
             .new(
-                ServicesConfig {
+                GameConfig {
                     admin_id: USERS[0].into(),
                     admin_name: "Player_1".to_string(),
                     lobby_name: "Lobby name".to_string(),

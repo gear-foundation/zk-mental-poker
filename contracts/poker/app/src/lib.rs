@@ -2,17 +2,16 @@
 
 pub mod services;
 use sails_rs::prelude::*;
+use services::game::{Config as LobbyConfig, PokerService, VerifyingKeyBytes, ZkPublicKey};
 use services::session::{Config as SessionConfig, SessionService, SignatureInfo};
-use services::{Config, PokerService, VerifyingKeyBytes, ZkPublicKey};
 use session_service::*;
 
 pub struct PokerProgram(());
 
 #[sails_rs::program]
 impl PokerProgram {
-    #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        config: Config,
+        config: LobbyConfig,
         session_config: SessionConfig,
         pts_actor_id: ActorId,
         pk: ZkPublicKey,
