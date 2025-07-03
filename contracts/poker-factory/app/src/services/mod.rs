@@ -1,5 +1,5 @@
 use gstd::prog::ProgramGenerator;
-use poker_client::{SignatureData, ZkPublicKey};
+use poker_client::{SignatureInfo, ZkPublicKey};
 use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
@@ -87,14 +87,6 @@ impl PokerFactoryService {
     }
 }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct Signature {
-    signature_data: SignatureData,
-    signature: Option<Vec<u8>>,
-}
-
 #[sails_rs::service(events = Event)]
 #[allow(clippy::new_without_default)]
 impl PokerFactoryService {
@@ -118,7 +110,7 @@ impl PokerFactoryService {
         &mut self,
         init_lobby: LobbyConfig,
         pk: ZkPublicKey,
-        session: Option<Signature>,
+        session: Option<SignatureInfo>,
     ) {
         let storage = self.get_mut();
         let msg_src = msg::source();

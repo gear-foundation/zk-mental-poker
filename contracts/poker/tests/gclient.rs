@@ -14,6 +14,8 @@ use poker_client::ZkPublicKey;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
 
+use poker_factory_client::SignatureInfo;
+
 use std::fs;
 
 use utils_gclient::*;
@@ -126,14 +128,15 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let request = [
         "PokerFactory".encode(),
         "CreateLobby".encode(),
-        (config.clone(), pks[0].1.clone()).encode(),
+        (config.clone(), pks[0].1.clone(), None::<SignatureInfo>).encode(),
     ]
     .concat();
     let gas = api
-        .calculate_handle_gas(None, factory_program_id, request, 0, true)
+        .calculate_handle_gas(None, factory_program_id, request, 1_000_000_000_000, true)
         .await?;
     println!("GAS {:?}", gas);
-    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
+
+    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()), value: 1_000_000_000_000);
     assert!(listener.message_processed(message_id).await?.succeed());
 
     Ok(())
