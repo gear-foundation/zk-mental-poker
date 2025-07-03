@@ -10,9 +10,11 @@ use crate::{build_player_card_disclosure, init_deck_and_card_map};
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
-use poker_client::PublicKey;
+use poker_client::ZkPublicKey;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
+
+use poker_factory_client::SignatureInfo;
 
 use std::fs;
 
@@ -126,14 +128,15 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let request = [
         "PokerFactory".encode(),
         "CreateLobby".encode(),
-        (config.clone(), pks[0].1.clone()).encode(),
+        (config.clone(), pks[0].1.clone(), None::<SignatureInfo>).encode(),
     ]
     .concat();
     let gas = api
-        .calculate_handle_gas(None, factory_program_id, request, 0, true)
+        .calculate_handle_gas(None, factory_program_id, request, 1_000_000_000_000, true)
         .await?;
     println!("GAS {:?}", gas);
-    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()));
+
+    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()), value: 1_000_000_000_000);
     assert!(listener.message_processed(message_id).await?.succeed());
 
     Ok(())
@@ -441,7 +444,7 @@ async fn test_time_limit() -> Result<()> {
 #[tokio::test]
 #[ignore]
 async fn test_registration() -> Result<()> {
-    use poker_client::PublicKey;
+    use poker_client::ZkPublicKey;
 
     let api = GearApi::dev().await?;
 
@@ -450,7 +453,7 @@ async fn test_registration() -> Result<()> {
 
     let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, ActorId, &str)> = vec![];
+    let mut pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &str)> = vec![];
     let api = get_new_client(&api, USERS_STR[0]).await;
     let id = api.get_actor_id();
     pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
@@ -915,7 +918,7 @@ async fn reveal_player_cards(
     program_id: ProgramId,
     api: &GearApi,
     listener: &mut EventListener,
-    pk_to_actor_id: Vec<(PublicKey, ActorId, &'static str)>,
+    pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &'static str)>,
 ) -> Result<()> {
     let player_cards =
         ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");

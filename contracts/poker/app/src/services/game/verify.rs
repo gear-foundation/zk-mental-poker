@@ -1,6 +1,6 @@
-use crate::services::EdwardsProjective;
-use crate::services::{
-    EncryptedCard, PublicKey,
+use crate::services::game::EdwardsProjective;
+use crate::services::game::{
+    EncryptedCard, ZkPublicKey,
     curve::{compare_points, compare_projective_and_coords, compare_public_keys},
 };
 use ark_ed_on_bls12_381_bandersnatch::Fq;
@@ -93,7 +93,7 @@ pub struct VerificationVariables {
 pub struct ParsedPublicInput {
     pub original_deck: Vec<EncryptedCard>,
     pub permuted_deck: Vec<EncryptedCard>,
-    pub public_key: PublicKey,
+    pub public_key: ZkPublicKey,
 }
 
 /// Batch verification context for managing multiple proof verifications
@@ -391,8 +391,8 @@ impl PublicInputParser {
         }
     }
 
-    fn extract_public_key(public_input: &[Vec<u8>]) -> PublicKey {
-        PublicKey {
+    fn extract_public_key(public_input: &[Vec<u8>]) -> ZkPublicKey {
+        ZkPublicKey {
             x: public_input[1]
                 .clone()
                 .try_into()
@@ -438,7 +438,7 @@ impl ShuffleChainValidator {
     pub fn validate_shuffle_chain(
         instances: &[VerificationVariables],
         original_deck: &[EdwardsProjective],
-        expected_pub_key: &PublicKey,
+        expected_pub_key: &ZkPublicKey,
         final_encrypted_deck: &[EncryptedCard],
     ) {
         let config = DeckConfig::STANDARD;
