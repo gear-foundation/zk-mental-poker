@@ -420,7 +420,7 @@ async fn gtest_check_cancel_registration_and_turn() {
     // Cancel registration
     env.service_client
         .cancel_registration(None)
-        .with_args(GTestArgs::new(USERS[1].into()))
+        .with_args(|args| args.with_actor_id(USERS[1].into()))
         .send_recv(env.program_id)
         .await
         .unwrap();
@@ -524,7 +524,7 @@ async fn gtest_check_cancel_registration_waiting_participants() {
 
     env.service_client
         .cancel_registration(None)
-        .with_args(GTestArgs::new(new_player_id.into()))
+        .with_args(|args| args.with_actor_id(new_player_id.into()))
         .send_recv(env.program_id)
         .await
         .unwrap();
@@ -722,7 +722,7 @@ impl TestEnvironment {
         for &user_id in &USERS {
             self.pts_service_client
                 .get_accural()
-                .with_args(GTestArgs::new(user_id.into()))
+                .with_args(|args| args.with_actor_id(user_id.into()))
                 .send_recv(self.pts_id)
                 .await
                 .unwrap();
@@ -732,7 +732,7 @@ impl TestEnvironment {
         for (i, user) in USERS.iter().enumerate().skip(1) {
             self.service_client
                 .register("Player".to_string(), test_data.pks[i].1.clone(), None)
-                .with_args(GTestArgs::new((*user).into()))
+                .with_args(|args| args.with_actor_id((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -791,13 +791,13 @@ impl TestEnvironment {
     async fn register(&mut self, id: u64, pk: ZkPublicKey) {
         self.pts_service_client
             .get_accural()
-            .with_args(GTestArgs::new(id.into()))
+            .with_args(|args| args.with_actor_id(id.into()))
             .send_recv(self.pts_id)
             .await
             .unwrap();
         self.service_client
             .register("".to_string(), pk, None)
-            .with_args(GTestArgs::new(id.into()))
+            .with_args(|args| args.with_actor_id(id.into()))
             .send_recv(self.program_id)
             .await
             .unwrap();
@@ -808,7 +808,7 @@ impl TestEnvironment {
             println!("action {:?}", action);
             self.service_client
                 .turn(action, None)
-                .with_args(GTestArgs::new(user_id.into()))
+                .with_args(|args| args.with_actor_id(user_id.into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -824,7 +824,7 @@ impl TestEnvironment {
             let proofs: Vec<_> = table_cards_proofs[i].1 .1[range.clone()].to_vec();
             self.service_client
                 .submit_table_partial_decryptions(proofs, None)
-                .with_args(GTestArgs::new((*user).into()))
+                .with_args(|args| args.with_actor_id((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -844,7 +844,7 @@ impl TestEnvironment {
             let proofs = hands[i].1.clone();
             self.service_client
                 .card_disclosure(proofs, None)
-                .with_args(GTestArgs::new(USERS[i].into()))
+                .with_args(|args| args.with_actor_id(USERS[i].into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
