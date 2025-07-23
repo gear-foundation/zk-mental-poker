@@ -31,7 +31,7 @@ async fn test_transfer() {
 
     service_client
         .get_accural()
-        .with_args(GTestArgs::new(USER_ID.into()))
+        .with_args(|args| args.with_actor_id(USER_ID.into()))
         .send_recv(program_id)
         .await
         .unwrap();

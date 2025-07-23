@@ -5,13 +5,14 @@ edition = "2024"
 
 [dependencies]
 sails-rs.workspace = true
-gstd = { workspace = true, features = ["debug"] }
+gstd = { workspace = true }
 gbuiltin-bls381.workspace = true
 hex-literal.workspace = true
 ark-ed-on-bls12-381-bandersnatch = { workspace = true, default-features = false }
 ark-ff = { workspace = true, default-features = false }
 ark-ec = { workspace = true, default-features = false }
 pts-client = { path = "../../pts/client"}
+session-service.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

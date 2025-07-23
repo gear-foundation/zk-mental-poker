@@ -2,7 +2,7 @@
 use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::ProgramId;
-use poker_client::{Card, Config, PublicKey, Suit};
+use poker_client::{Card, GameConfig, Suit, ZkPublicKey};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
 use ark_ec::AffineRepr;
@@ -59,7 +59,7 @@ pub async fn get_new_client(api: &GearApi, name: &str) -> GearApi {
 
 pub async fn init(
     api: &GearApi,
-    pk: PublicKey,
+    pk: ZkPublicKey,
     listener: &mut EventListener,
 ) -> Result<(ProgramId, ProgramId)> {
     // PTS
@@ -85,7 +85,7 @@ pub async fn init(
     assert!(listener.message_processed(message_id).await?.succeed());
 
     // POKER
-    let config = Config {
+    let config = GameConfig {
         time_per_move_ms: 30_000,
         admin_id: api.get_actor_id(),
         admin_name: "Name".to_string(),
@@ -131,7 +131,7 @@ pub async fn init(
 pub async fn make_zk_actions(
     api: &GearApi,
     listener: &mut EventListener,
-) -> Result<(ProgramId, Vec<(PublicKey, ActorId, &'static str)>)> {
+) -> Result<(ProgramId, Vec<(ZkPublicKey, ActorId, &'static str)>)> {
     let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
     let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
     let deck = ZkLoaderData::load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
@@ -139,7 +139,7 @@ pub async fn make_zk_actions(
     let decrypt_proofs =
         ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
 
-    let mut pk_to_actor_id: Vec<(PublicKey, ActorId, &str)> = vec![];
+    let mut pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &str)> = vec![];
     let api = get_new_client(api, USERS_STR[0]).await;
     let id = api.get_actor_id();
     pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
@@ -243,9 +243,9 @@ pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective
 }
 
 pub fn build_player_card_disclosure(
-    data: Vec<(PublicKey, Vec<DecryptedCardWithProof>)>,
+    data: Vec<(ZkPublicKey, Vec<DecryptedCardWithProof>)>,
     card_map: &HashMap<EdwardsProjective, Card>,
-) -> Vec<(PublicKey, Vec<(Card, VerificationVariables)>)> {
+) -> Vec<(ZkPublicKey, Vec<(Card, VerificationVariables)>)> {
     let mut result = Vec::new();
 
     for (pk, decs) in data {

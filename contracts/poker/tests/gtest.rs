@@ -2,8 +2,8 @@ use gtest::Program;
 use gtest::WasmProgram;
 use hex_literal::hex;
 
-use poker_client::PublicKey;
-use poker_client::{traits::*, Config, Stage, Status};
+use poker_client::ZkPublicKey;
+use poker_client::{traits::*, GameConfig, SessionConfig, Stage, Status};
 use pts_client::traits::{Pts, PtsFactory};
 use sails_rs::ActorId;
 use sails_rs::{
@@ -419,8 +419,8 @@ async fn gtest_check_cancel_registration_and_turn() {
 
     // Cancel registration
     env.service_client
-        .cancel_registration()
-        .with_args(GTestArgs::new(USERS[1].into()))
+        .cancel_registration(None)
+        .with_args(|args| args.with_actor_id(USERS[1].into()))
         .send_recv(env.program_id)
         .await
         .unwrap();
@@ -523,8 +523,8 @@ async fn gtest_check_cancel_registration_waiting_participants() {
     .await;
 
     env.service_client
-        .cancel_registration()
-        .with_args(GTestArgs::new(new_player_id.into()))
+        .cancel_registration(None)
+        .with_args(|args| args.with_actor_id(new_player_id.into()))
         .send_recv(env.program_id)
         .await
         .unwrap();
@@ -542,13 +542,13 @@ struct TestEnvironment {
     pts_service_client: pts_client::Pts<GTestRemoting>,
 }
 struct TestData {
-    pks: Vec<(usize, poker_client::PublicKey)>,
+    pks: Vec<(usize, poker_client::ZkPublicKey)>,
     shuffle_proofs: Vec<poker_client::VerificationVariables>,
     encrypted_deck: Vec<poker_client::EncryptedCard>,
     decrypt_proofs: Vec<poker_client::VerificationVariables>,
     table_cards_proofs: Option<
         Vec<(
-            poker_client::PublicKey,
+            poker_client::ZkPublicKey,
             (
                 Vec<(poker_client::EncryptedCard, [Vec<u8>; 3])>,
                 Vec<poker_client::VerificationVariables>,
@@ -557,7 +557,7 @@ struct TestData {
     >,
     player_cards: Option<
         Vec<(
-            poker_client::PublicKey,
+            poker_client::ZkPublicKey,
             Vec<utils_gclient::zk_loader::DecryptedCardWithProof>,
         )>,
     >,
@@ -678,7 +678,7 @@ impl TestEnvironment {
     async fn setup_poker_program(
         remoting: &GTestRemoting,
         pts_id: ActorId,
-        admin_pk: &PublicKey,
+        admin_pk: &ZkPublicKey,
     ) -> ActorId {
         let shuffle_vkey_bytes =
             ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
@@ -690,7 +690,7 @@ impl TestEnvironment {
 
         program_factory
             .new(
-                Config {
+                GameConfig {
                     admin_id: USERS[0].into(),
                     admin_name: "Player_1".to_string(),
                     lobby_name: "Lobby name".to_string(),
@@ -699,10 +699,16 @@ impl TestEnvironment {
                     starting_bank: 1000,
                     time_per_move_ms: 30_000,
                 },
+                SessionConfig {
+                    gas_to_delete_session: 10_000_000_000,
+                    minimum_session_duration_ms: 180_000,
+                    ms_per_block: 3_000,
+                },
                 pts_id,
                 admin_pk.clone(),
                 shuffle_vkey_bytes,
                 decrypt_vkey_bytes,
+                None,
             )
             .send_recv(program_code_id, b"salt")
             .await
@@ -716,7 +722,7 @@ impl TestEnvironment {
         for &user_id in &USERS {
             self.pts_service_client
                 .get_accural()
-                .with_args(GTestArgs::new(user_id.into()))
+                .with_args(|args| args.with_actor_id(user_id.into()))
                 .send_recv(self.pts_id)
                 .await
                 .unwrap();
@@ -725,8 +731,8 @@ impl TestEnvironment {
         // Register players (skip index 0 as it's admin)
         for (i, user) in USERS.iter().enumerate().skip(1) {
             self.service_client
-                .register("Player".to_string(), test_data.pks[i].1.clone())
-                .with_args(GTestArgs::new((*user).into()))
+                .register("Player".to_string(), test_data.pks[i].1.clone(), None)
+                .with_args(|args| args.with_actor_id((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -736,7 +742,7 @@ impl TestEnvironment {
     async fn start_and_setup_game(&mut self, test_data: &TestData) {
         println!("START GAME");
         self.service_client
-            .start_game()
+            .start_game(None)
             .send_recv(self.program_id)
             .await
             .unwrap();
@@ -768,7 +774,7 @@ impl TestEnvironment {
 
     async fn restart_game(&mut self) {
         self.service_client
-            .restart_game()
+            .restart_game(None)
             .send_recv(self.program_id)
             .await
             .unwrap();
@@ -776,22 +782,22 @@ impl TestEnvironment {
 
     async fn delete_player(&mut self, id: u64) {
         self.service_client
-            .delete_player(id.into())
+            .delete_player(id.into(), None)
             .send_recv(self.program_id)
             .await
             .unwrap();
     }
 
-    async fn register(&mut self, id: u64, pk: PublicKey) {
+    async fn register(&mut self, id: u64, pk: ZkPublicKey) {
         self.pts_service_client
             .get_accural()
-            .with_args(GTestArgs::new(id.into()))
+            .with_args(|args| args.with_actor_id(id.into()))
             .send_recv(self.pts_id)
             .await
             .unwrap();
         self.service_client
-            .register("".to_string(), pk)
-            .with_args(GTestArgs::new(id.into()))
+            .register("".to_string(), pk, None)
+            .with_args(|args| args.with_actor_id(id.into()))
             .send_recv(self.program_id)
             .await
             .unwrap();
@@ -801,8 +807,8 @@ impl TestEnvironment {
         for (user_id, action) in moves {
             println!("action {:?}", action);
             self.service_client
-                .turn(action)
-                .with_args(GTestArgs::new(user_id.into()))
+                .turn(action, None)
+                .with_args(|args| args.with_actor_id(user_id.into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -817,8 +823,8 @@ impl TestEnvironment {
         for (i, user) in USERS.iter().enumerate() {
             let proofs: Vec<_> = table_cards_proofs[i].1 .1[range.clone()].to_vec();
             self.service_client
-                .submit_table_partial_decryptions(proofs)
-                .with_args(GTestArgs::new((*user).into()))
+                .submit_table_partial_decryptions(proofs, None)
+                .with_args(|args| args.with_actor_id((*user).into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
@@ -837,8 +843,8 @@ impl TestEnvironment {
         for i in 0..USERS.len() {
             let proofs = hands[i].1.clone();
             self.service_client
-                .card_disclosure(proofs)
-                .with_args(GTestArgs::new(USERS[i].into()))
+                .card_disclosure(proofs, None)
+                .with_args(|args| args.with_actor_id(USERS[i].into()))
                 .send_recv(self.program_id)
                 .await
                 .unwrap();
