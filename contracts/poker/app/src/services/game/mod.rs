@@ -271,7 +271,7 @@ async fn remove_participant_if_registered(
             | Status::WaitingShuffleVerification
             | Status::WaitingStart
             | Status::Finished { .. } => (),
-            _ => panic!("Wrong status"),
+            _ => panic("Wrong status"),
         }
 
         let balance = participant.balance;
@@ -376,11 +376,11 @@ impl PokerService {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
         if storage.participants.iter().any(|(id, _)| *id == player_id) {
-            panic!("Already registered");
+            panic("Already registered");
         }
 
         if storage.participants.len() == 9 {
-            panic!("Alerady max amount of players");
+            panic("Alerady max amount of players");
         }
 
         pts_transfer(
@@ -434,7 +434,7 @@ impl PokerService {
         let player_id = get_player(&session_for_account);
 
         if player_id == storage.config.admin_id {
-            panic!("Access denied");
+            panic("Access denied");
         }
 
         if let Some(balance) = remove_participant_if_registered(storage, player_id).await {
@@ -443,7 +443,7 @@ impl PokerService {
             self.emit_event(Event::RegistrationCanceled { player_id })
                 .expect("Event Error");
         } else {
-            panic!("You are not registered");
+            panic("You are not registered");
         }
     }
 
@@ -671,7 +671,7 @@ impl PokerService {
             panic("Access denied");
         }
         if storage.participants.len() < 2 {
-            panic!("Not enough participants");
+            panic("Not enough participants");
         }
         if storage.status != Status::Registration {
             panic("Wrong status");
@@ -788,7 +788,7 @@ impl PokerService {
         };
 
         if instances.len() != expected_count {
-            panic!("Wrong amount of proofs");
+            panic("Wrong amount of proofs");
         }
         let decryptions = get_cards_and_decryptions(&storage.table_cards, &instances);
 
@@ -798,11 +798,11 @@ impl PokerService {
             .await;
 
         if !storage.participants.iter().any(|(id, _)| *id == player_id) {
-            panic!("Not participant");
+            panic("Not participant");
         }
 
         if decryptions.len() != expected_count {
-            panic!("Wrong count");
+            panic("Wrong count");
         }
 
         let expected_cards = &storage.table_cards[base_index..base_index + expected_count];
@@ -840,7 +840,7 @@ impl PokerService {
                 {
                     revealed_cards.push(card);
                 } else {
-                    panic!("Failed to decrypt card");
+                    panic("Failed to decrypt card");
                 }
             }
 
@@ -889,7 +889,7 @@ impl PokerService {
                 | Stage::WaitingTableCardsAfterFlop
                 | Stage::WaitingTableCardsAfterTurn
         ) {
-            panic!("Wrong stage");
+            panic("Wrong stage");
         }
 
         let betting = storage.betting.as_mut().expect("No betting");
@@ -922,13 +922,13 @@ impl PokerService {
                     .expect("Event Error");
                     return;
                 } else if next_or_last != player {
-                    panic!("Not your turn!");
+                    panic("Not your turn!");
                 }
             } else {
-                panic!("No active players");
+                panic("No active players");
             }
         } else if betting.turn != player {
-            panic!("Not your turn!");
+            panic("Not your turn!");
         }
         // Process the player's action
         match action {
@@ -1124,7 +1124,7 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
         // if storage.status != Status::WaitingForCardsToBeDisclosed {
-        //     panic!("Wrong status")
+        //     panic("Wrong status")
         // }
         let player = get_player(&session_for_account);
 
