@@ -437,6 +437,10 @@ impl PokerService {
             panic("Access denied");
         }
 
+        if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == player_id)
+        {
+            storage.agg_pub_key = substract_agg_pub_key(&storage.agg_pub_key, &participant.pk);
+        }
         if let Some(balance) = remove_participant_if_registered(storage, player_id).await {
             pts_transfer(storage.pts_actor_id, exec::program_id(), player_id, balance).await;
 
@@ -1277,5 +1281,9 @@ impl PokerService {
 
     pub fn revealed_players(&self) -> Vec<(ActorId, (Card, Card))> {
         self.get().revealed_players.clone().into_iter().collect()
+    }
+
+    pub fn agg_pub_key(&self) -> ZkPublicKey {
+        self.get().agg_pub_key.clone()
     }
 }
