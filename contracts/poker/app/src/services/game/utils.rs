@@ -1,12 +1,8 @@
 use core::fmt::Debug;
-use gstd::{ext, format};
 use sails_rs::collections::HashMap;
 use sails_rs::collections::HashSet;
 use sails_rs::prelude::*;
 use sails_rs::{ActorId, Vec};
-pub fn panic(err: impl Debug) -> ! {
-    ext::panic_bytes(format!("{err:?}").as_bytes())
-}
 
 type PartialDecryption = [Vec<u8>; 3];
 #[derive(Default, Debug)]

@@ -13,9 +13,11 @@ use crate::services::game::curve::{
 use crate::services::session::Storage as SessionStorage;
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
-pub use verify::{
-    BatchVerificationContext, ShuffleChainValidator, VerificationVariables, VerifyingKeyBytes,
-};
+use zk_verification_client::zk_verification::io as zk_io;
+
+pub use verify::ShuffleChainValidator;
+
+use zk_verification_client::VerificationVariables;
 
 #[derive(Debug, Encode, Decode, TypeInfo, Clone, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
@@ -24,13 +26,11 @@ pub struct EncryptedCard {
     pub c0: [Vec<u8>; 3], // (x, y, z)
     pub c1: [Vec<u8>; 3], // (x, y, z)
 }
-const ACTOR_ID: [u8; 32] =
-    hex_literal::hex!("6b6e292c382945e80bf51af2ba7fe9f458dcff81ae6075c46f9095e1bbecdc37");
+
 #[derive(Debug)]
 struct Storage {
     // for zk
-    shuffle_verification_context: BatchVerificationContext,
-    decrypt_verificaiton_context: BatchVerificationContext,
+    zk_verification_id: ActorId,
     encrypted_deck: Option<Vec<EncryptedCard>>,
     encrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
     partially_decrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
@@ -167,8 +167,7 @@ impl PokerService {
         config: Config,
         pts_actor_id: ActorId,
         pk: ZkPublicKey,
-        vk_shuffle_bytes: VerifyingKeyBytes,
-        vk_decrypt_bytes: VerifyingKeyBytes,
+        zk_verification_id: ActorId,
     ) -> Self {
         let participants = vec![(
             config.admin_id,
@@ -184,6 +183,7 @@ impl PokerService {
         let (original_deck, original_card_map) = init_deck_and_card_map();
         unsafe {
             STORAGE = Some(Storage {
+                zk_verification_id,
                 config,
                 status: Status::Registration,
                 participants,
@@ -194,14 +194,6 @@ impl PokerService {
                 betting_bank: HashMap::new(),
                 all_in_players: Vec::new(),
                 already_invested_in_the_circle: HashMap::new(),
-                decrypt_verificaiton_context: BatchVerificationContext::new(
-                    &vk_decrypt_bytes,
-                    ActorId::from(ACTOR_ID),
-                ),
-                shuffle_verification_context: BatchVerificationContext::new(
-                    &vk_shuffle_bytes,
-                    ActorId::from(ACTOR_ID),
-                ),
                 encrypted_deck: None,
                 deck_position: 0,
                 encrypted_cards: HashMap::new(),
@@ -271,7 +263,7 @@ async fn remove_participant_if_registered(
             | Status::WaitingShuffleVerification
             | Status::WaitingStart
             | Status::Finished { .. } => (),
-            _ => panic("Wrong status"),
+            _ => panic!("Wrong status"),
         }
 
         let balance = participant.balance;
@@ -376,11 +368,11 @@ impl PokerService {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
         if storage.participants.iter().any(|(id, _)| *id == player_id) {
-            panic("Already registered");
+            panic!("Already registered");
         }
 
         if storage.participants.len() == 9 {
-            panic("Alerady max amount of players");
+            panic!("Alerady max amount of players");
         }
 
         pts_transfer(
@@ -434,7 +426,7 @@ impl PokerService {
         let player_id = get_player(&session_for_account);
 
         if player_id == storage.config.admin_id {
-            panic("Access denied");
+            panic!("Access denied");
         }
 
         if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == player_id)
@@ -447,7 +439,7 @@ impl PokerService {
             self.emit_event(Event::RegistrationCanceled { player_id })
                 .expect("Event Error");
         } else {
-            panic("You are not registered");
+            panic!("You are not registered");
         }
     }
 
@@ -459,7 +451,7 @@ impl PokerService {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
         if player_id != storage.config.admin_id {
-            panic("Access denied");
+            panic!("Access denied");
         }
         if !matches!(storage.status, Status::Finished { .. }) {
             storage.refund_bets_to_players();
@@ -509,7 +501,7 @@ impl PokerService {
         let storage = self.get();
         let player_id = get_player(&session_for_account);
         if player_id != storage.config.admin_id {
-            panic("Access denied");
+            panic!("Access denied");
         }
         match storage.status {
             Status::Registration
@@ -517,7 +509,7 @@ impl PokerService {
             | Status::Finished { .. }
             | Status::WaitingStart => {}
             _ => {
-                panic("Wrong status");
+                panic!("Wrong status");
             }
         }
         let mut ids = Vec::new();
@@ -554,11 +546,11 @@ impl PokerService {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
         if player_id != storage.config.admin_id {
-            panic("Access denied");
+            panic!("Access denied");
         }
         match storage.status {
             Status::Registration | Status::Finished { .. } => {
-                panic("Wrong status");
+                panic!("Wrong status");
             }
             _ => {
                 storage.refund_bets_to_players();
@@ -592,13 +584,13 @@ impl PokerService {
         if get_player(&session_for_account) != storage.config.admin_id
             || player_id == storage.config.admin_id
         {
-            panic("Access denied");
+            panic!("Access denied");
         }
         if storage.status != Status::Registration
             && storage.status != Status::WaitingShuffleVerification
             && storage.status != Status::WaitingStart
         {
-            panic("Wrong status");
+            panic!("Wrong status");
         }
 
         if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == player_id)
@@ -618,7 +610,7 @@ impl PokerService {
                 .remove_and_update_first_index(&player_id);
             storage.status = Status::Registration;
         } else {
-            panic("There is no such player");
+            panic!("There is no such player");
         }
 
         self.emit_event(Event::PlayerDeleted { player_id })
@@ -632,7 +624,7 @@ impl PokerService {
     ) {
         let storage = self.get_mut();
         if storage.status != Status::WaitingShuffleVerification {
-            panic("Wrong status");
+            panic!("Wrong status");
         }
 
         ShuffleChainValidator::validate_shuffle_chain(
@@ -642,10 +634,11 @@ impl PokerService {
             &encrypted_deck,
         );
 
-        storage
-            .shuffle_verification_context
-            .verify_batch(instances)
-            .await;
+        let request = zk_io::VerifyShuffle::encode_call(instances);
+        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
+            .expect("Error in async message to ZK contract")
+            .await
+            .expect("PTS: Error ZK shuffle verification");
 
         storage.status = Status::WaitingPartialDecryptionsForPlayersCards;
         storage.encrypted_deck = Some(encrypted_deck);
@@ -672,13 +665,13 @@ impl PokerService {
     pub async fn start_game(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
         if get_player(&session_for_account) != storage.config.admin_id {
-            panic("Access denied");
+            panic!("Access denied");
         }
         if storage.participants.len() < 2 {
-            panic("Not enough participants");
+            panic!("Not enough participants");
         }
         if storage.status != Status::Registration {
-            panic("Wrong status");
+            panic!("Wrong status");
         }
 
         storage.active_participants.set_first_index();
@@ -721,7 +714,7 @@ impl PokerService {
         let mut dealt = Vec::new();
         for id in storage.participants.iter().map(|(id, _)| id) {
             if pos + 2 > deck.len() {
-                panic("Not enough cards");
+                panic!("Not enough cards");
             }
 
             let card1 = deck[pos].clone();
@@ -746,10 +739,11 @@ impl PokerService {
 
         let cards_by_player = get_decrypted_points(&instances, &storage.encrypted_cards);
 
-        storage
-            .decrypt_verificaiton_context
-            .verify_batch(instances)
-            .await;
+        let request = zk_io::VerifyDecrypt::encode_call(instances);
+        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
+            .expect("Error in async message to ZK contract")
+            .await
+            .expect("PTS: Error ZK decrypt verification");
 
         for (player, cards) in cards_by_player {
             storage.partially_decrypted_cards.insert(player, cards);
@@ -778,35 +772,36 @@ impl PokerService {
                 Stage::WaitingTableCardsAfterPreFlop => (0, 3, Some(Stage::Flop)),
                 Stage::WaitingTableCardsAfterFlop => (3, 1, Some(Stage::Turn)),
                 Stage::WaitingTableCardsAfterTurn => (4, 1, Some(Stage::River)),
-                _ => panic("Wrong stage"),
+                _ => panic!("Wrong stage"),
             },
             Status::WaitingForAllTableCardsToBeDisclosed => {
                 match storage.revealed_table_cards.len() {
                     0 => (0, 5, None),
                     3 => (3, 2, None),
                     4 => (4, 1, None),
-                    _ => panic("Wrong amount of revealed cards"),
+                    _ => panic!("Wrong amount of revealed cards"),
                 }
             }
-            _ => panic("Wrong status"),
+            _ => panic!("Wrong status"),
         };
 
         if instances.len() != expected_count {
-            panic("Wrong amount of proofs");
+            panic!("Wrong amount of proofs");
         }
         let decryptions = get_cards_and_decryptions(&storage.table_cards, &instances);
 
-        storage
-            .decrypt_verificaiton_context
-            .verify_batch(instances)
-            .await;
+        let request = zk_io::VerifyDecrypt::encode_call(instances);
+        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
+            .expect("Error in async message to ZK contract")
+            .await
+            .expect("PTS: Error ZK decrypt verification");
 
         if !storage.participants.iter().any(|(id, _)| *id == player_id) {
-            panic("Not participant");
+            panic!("Not participant");
         }
 
         if decryptions.len() != expected_count {
-            panic("Wrong count");
+            panic!("Wrong count");
         }
 
         let expected_cards = &storage.table_cards[base_index..base_index + expected_count];
@@ -844,7 +839,7 @@ impl PokerService {
                 {
                     revealed_cards.push(card);
                 } else {
-                    panic("Failed to decrypt card");
+                    panic!("Failed to decrypt card");
                 }
             }
 
@@ -884,7 +879,7 @@ impl PokerService {
         let storage = self.get_mut();
 
         let Status::Play { stage } = &mut storage.status else {
-            panic("Wrong status");
+            panic!("Wrong status");
         };
 
         if matches!(
@@ -893,7 +888,7 @@ impl PokerService {
                 | Stage::WaitingTableCardsAfterFlop
                 | Stage::WaitingTableCardsAfterTurn
         ) {
-            panic("Wrong stage");
+            panic!("Wrong stage");
         }
 
         let betting = storage.betting.as_mut().expect("No betting");
@@ -926,13 +921,13 @@ impl PokerService {
                     .expect("Event Error");
                     return;
                 } else if next_or_last != player {
-                    panic("Not your turn!");
+                    panic!("Not your turn!");
                 }
             } else {
-                panic("No active players");
+                panic!("No active players");
             }
         } else if betting.turn != player {
-            panic("Not your turn!");
+            panic!("Not your turn!");
         }
         // Process the player's action
         match action {
@@ -946,7 +941,7 @@ impl PokerService {
                     .unwrap_or(&0);
                 let call_value = betting.current_bet - already_invested;
                 if call_value == 0 || participant.balance <= call_value {
-                    panic("Wrong action");
+                    panic!("Wrong action");
                 }
                 participant.balance -= call_value;
                 betting.acted_players.push(player);
@@ -968,7 +963,7 @@ impl PokerService {
                     .unwrap_or(&0);
 
                 if betting.current_bet != already_invested {
-                    panic("cannot check");
+                    panic!("cannot check");
                 }
 
                 betting.acted_players.push(player);
@@ -980,10 +975,10 @@ impl PokerService {
                     .unwrap_or(&0);
 
                 if participant.balance <= bet {
-                    panic("Wrong action");
+                    panic!("Wrong action");
                 }
                 if already_invested + bet <= betting.current_bet {
-                    panic("Raise must be higher");
+                    panic!("Raise must be higher");
                 }
                 betting.current_bet = already_invested + bet;
                 participant.balance -= bet;
@@ -1106,7 +1101,7 @@ impl PokerService {
         let deck = storage.encrypted_deck.as_ref().expect("No shuffled deck");
 
         if storage.deck_position + count > deck.len() {
-            panic("Not enough cards");
+            panic!("Not enough cards");
         }
 
         let mut new_cards = Vec::new();
@@ -1145,10 +1140,12 @@ impl PokerService {
 
         let only_proofs = vec![instances[0].1.clone(), instances[1].1.clone()];
 
-        storage
-            .decrypt_verificaiton_context
-            .verify_batch(only_proofs)
-            .await;
+        let request = zk_io::VerifyDecrypt::encode_call(only_proofs);
+        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
+            .expect("Error in async message to ZK contract")
+            .await
+            .expect("PTS: Error ZK decrypt verification");
+
         let cards = (instances[0].0.clone(), instances[1].0.clone());
         storage.revealed_players.insert(player, cards);
 

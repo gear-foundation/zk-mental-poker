@@ -2,7 +2,7 @@
 
 pub mod services;
 use sails_rs::prelude::*;
-use services::game::{Config as LobbyConfig, PokerService, VerifyingKeyBytes, ZkPublicKey};
+use services::game::{Config as LobbyConfig, PokerService, ZkPublicKey};
 use services::session::{Config as SessionConfig, SessionService, SignatureInfo};
 use session_service::*;
 
@@ -15,12 +15,11 @@ impl PokerProgram {
         session_config: SessionConfig,
         pts_actor_id: ActorId,
         pk: ZkPublicKey,
-        vk_shuffle_bytes: VerifyingKeyBytes,
-        vk_decrypt_bytes: VerifyingKeyBytes,
         session_for_admin: Option<SignatureInfo>,
+        zk_verification_id: ActorId,
     ) -> Self {
         let admin_id = config.admin_id;
-        PokerService::init(config, pts_actor_id, pk, vk_shuffle_bytes, vk_decrypt_bytes);
+        PokerService::init(config, pts_actor_id, pk, zk_verification_id);
         SessionService::init(session_config);
         if let Some(SignatureInfo {
             signature_data,

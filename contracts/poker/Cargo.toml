@@ -17,6 +17,8 @@ pts = { path = "../pts", features = ["wasm-binary"] }
 poker = { path = ".", features = ["wasm-binary"] }
 poker-client = { path = "client" }
 pts-client = { path = "../pts/client" }
+zk-verification = { path = "../zk-verification", features = ["wasm-binary"] }
+zk-verification-client = { path = "../zk-verification/client"}
 poker-factory-client = { path = "../poker-factory/client" }
 sails-rs = { workspace = true, features = ["gtest"] }
 tokio = { workspace = true, features = ["rt", "macros"] }

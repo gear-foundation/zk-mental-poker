@@ -2,13 +2,14 @@
 use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::ProgramId;
-use poker_client::{Card, GameConfig, Suit, ZkPublicKey};
+use num_bigint::Sign;
+use poker_client::{Card, GameConfig, SessionConfig, Suit, ZkPublicKey};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
 use ark_ec::AffineRepr;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
 use ark_ff::PrimeField;
-use poker_client::VerificationVariables;
+use poker_client::{SignatureInfo, VerificationVariables};
 use sails_rs::collections::HashMap;
 use zk_loader::{DecryptedCardWithProof, ZkLoaderData};
 
@@ -62,7 +63,27 @@ pub async fn init(
     pk: ZkPublicKey,
     listener: &mut EventListener,
 ) -> Result<(ProgramId, ProgramId)> {
+    // ZK VERIFICATION
+    println!("Upload zk verification contract");
+    let path = "../target/wasm32-gear/release/zk_verification.opt.wasm";
+    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
+    let request = ["New".encode(), (shuffle_vkey, decrypt_vkey).encode()].concat();
+
+    let (message_id, zk_program_id, _hash) = api
+        .upload_program_bytes(
+            gclient::code_from_os(path).unwrap(),
+            gclient::now_micros().to_le_bytes(),
+            request,
+            740_000_000_000,
+            0,
+        )
+        .await
+        .expect("Error upload program bytes");
+    assert!(listener.message_processed(message_id).await?.succeed());
+
     // PTS
+    println!("Upload pts contract");
     let path = "../target/wasm32-gear/release/pts.opt.wasm";
     let accural: u128 = 10_000;
     let time_ms_between_balance_receipt: u64 = 10_000;
@@ -85,6 +106,7 @@ pub async fn init(
     assert!(listener.message_processed(message_id).await?.succeed());
 
     // POKER
+    println!("Upload poker contract");
     let config = GameConfig {
         time_per_move_ms: 30_000,
         admin_id: api.get_actor_id(),
@@ -94,11 +116,23 @@ pub async fn init(
         big_blind: 10,
         starting_bank: 1000,
     };
+    let session_config = SessionConfig {
+        gas_to_delete_session: 10_000_000_000,
+        minimum_session_duration_ms: 180_000,
+        ms_per_block: 3_000,
+    };
     let pts_id_bytes: [u8; 32] = pts_program_id.into();
     let pts_id: ActorId = pts_id_bytes.into();
-    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
-    let constructor = (config, pts_id, pk, shuffle_vkey, decrypt_vkey);
+
+    let session_for_admin: Option<SignatureInfo> = None;
+    let constructor = (
+        config,
+        session_config,
+        pts_id,
+        pk,
+        session_for_admin,
+        zk_program_id,
+    );
     let request = ["New".encode(), constructor.encode()].concat();
 
     let path = "../target/wasm32-gear/release/poker.opt.wasm";
@@ -149,6 +183,7 @@ pub async fn make_zk_actions(
 
     // Resgiter
     println!("REGISTER");
+    let session_for_account: Option<SignatureInfo> = None;
     let mut player_name = "Alice".to_string();
     let api = get_new_client(&api, USERS_STR[1]).await;
     let id = api.get_actor_id();
@@ -156,7 +191,7 @@ pub async fn make_zk_actions(
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone(), session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     player_name = "Bob".to_string();
@@ -167,12 +202,7 @@ pub async fn make_zk_actions(
     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[2].1.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    // Shuffle deck
-    println!("SHUFFLE");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "ShuffleDeck", payload: (deck, proofs));
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[2].1.clone(), session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     // Start game
@@ -181,7 +211,12 @@ pub async fn make_zk_actions(
         .clone()
         .with(USERS_STR[0])
         .expect("Unable to change signer.");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "StartGame", payload: (session_for_account.clone()));
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    // Shuffle deck
+    println!("SHUFFLE");
+    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "ShuffleDeck", payload: (deck, proofs));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     println!("DECRYPT");
@@ -289,7 +324,6 @@ macro_rules! send_request {
                 $action.to_string().encode(),
                 ($($val),*).encode(),
             ].concat();
-
             let (message_id, _) = $api
                 .send_message_bytes($program_id, request.clone(), 749_000_000_000, $value)
                 .await?;
