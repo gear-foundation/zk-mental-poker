@@ -55,8 +55,12 @@ pub enum Event {
     LobbyDeleted {
         lobby_address: ActorId,
     },
-    ConfigChanged { config: Config },
-    PtsActorIdChanged { pts_actor_id: ActorId },
+    ConfigChanged {
+        config: Config,
+    },
+    PtsActorIdChanged {
+        pts_actor_id: ActorId,
+    },
 }
 
 pub struct PokerFactoryService(());
