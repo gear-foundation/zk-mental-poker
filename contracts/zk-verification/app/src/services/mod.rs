@@ -29,6 +29,7 @@ impl ZkVerificationService {
     }
 }
 #[sails_rs::service]
+#[allow(clippy::new_without_default)]
 impl ZkVerificationService {
     pub fn new() -> Self {
         Self(())
