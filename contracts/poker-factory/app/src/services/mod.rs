@@ -58,6 +58,9 @@ pub enum Event {
     ConfigChanged {
         config: Config,
     },
+    ZkVerificationIdChanged {
+        zk_verification_id: ActorId,
+    },
     PtsActorIdChanged {
         pts_actor_id: ActorId,
     },
@@ -218,7 +221,7 @@ impl PokerFactoryService {
         if !storage.admins.contains(&msg_src) {
             panic!("Access denied");
         }
-        storage.config = config;
+        storage.config = config.clone();
 
         self.emit_event(Event::ConfigChanged { config })
             .expect("Notification Error");
@@ -232,7 +235,7 @@ impl PokerFactoryService {
         }
         storage.zk_verification_id = zk_verification_id;
 
-        self.emit_event(Event::ConfigChanged { config })
+        self.emit_event(Event::ZkVerificationIdChanged { zk_verification_id })
             .expect("Notification Error");
     }
 
