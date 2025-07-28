@@ -55,6 +55,8 @@ pub enum Event {
     LobbyDeleted {
         lobby_address: ActorId,
     },
+    ConfigChanged { config: Config },
+    PtsActorIdChanged { pts_actor_id: ActorId },
 }
 
 pub struct PokerFactoryService(());
@@ -203,6 +205,42 @@ impl PokerFactoryService {
         storage.lobbies.remove(&lobby_address);
 
         self.emit_event(Event::LobbyDeleted { lobby_address })
+            .expect("Notification Error");
+    }
+
+    pub async fn change_config(&mut self, config: Config) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if !storage.admins.contains(&msg_src) {
+            panic!("Access denied");
+        }
+        storage.config = config;
+
+        self.emit_event(Event::ConfigChanged { config })
+            .expect("Notification Error");
+    }
+
+    pub async fn change_zk_verification_id(&mut self, zk_verification_id: ActorId) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if !storage.admins.contains(&msg_src) {
+            panic!("Access denied");
+        }
+        storage.zk_verification_id = zk_verification_id;
+
+        self.emit_event(Event::ConfigChanged { config })
+            .expect("Notification Error");
+    }
+
+    pub async fn change_pts_actor_id(&mut self, pts_actor_id: ActorId) {
+        let storage = self.get_mut();
+        let msg_src = msg::source();
+        if !storage.admins.contains(&msg_src) {
+            panic!("Access denied");
+        }
+        storage.pts_actor_id = pts_actor_id;
+
+        self.emit_event(Event::PtsActorIdChanged { pts_actor_id })
             .expect("Notification Error");
     }
 
