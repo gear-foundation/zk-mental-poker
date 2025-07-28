@@ -6,10 +6,10 @@ use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
 use crate::zk_loader::ZkLoaderData;
 use crate::{build_player_card_disclosure, init_deck_and_card_map};
-
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
 use gear_core::ids::{CodeId, ProgramId};
+use poker_client::SessionConfig;
 use poker_client::ZkPublicKey;
 use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
@@ -31,11 +31,31 @@ pub struct TurnManager {
 #[tokio::test]
 #[ignore]
 async fn upload_contracts_to_testnet() -> Result<()> {
-    let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
     // let api = GearApi::dev().await?;
     let api = GearApi::vara_testnet().await?;
     let mut listener = api.subscribe().await?;
     assert!(listener.blocks_running().await?);
+
+    println!("Upload zk verification contract");
+    let path = "../target/wasm32-gear/release/zk_verification.opt.wasm";
+    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
+    let request = ["New".encode(), (shuffle_vkey, decrypt_vkey).encode()].concat();
+
+    let (message_id, zk_program_id, _hash) = api
+        .upload_program_bytes(
+            gclient::code_from_os(path).unwrap(),
+            gclient::now_micros().to_le_bytes(),
+            request,
+            740_000_000_000,
+            0,
+        )
+        .await
+        .expect("Error upload program bytes");
+    assert!(listener.message_processed(message_id).await?.succeed());
+
+    let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
+
     let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
     {
         code_id
@@ -71,9 +91,6 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let pts_id: ActorId = pts_id_bytes.into();
     println!("pts_program_id {:?}", pts_program_id);
 
-    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
-
     // Factory
 
     let path = "../target/wasm32-gear/release/poker_factory.opt.wasm";
@@ -82,11 +99,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         gas_for_program: 680_000_000_000,
         gas_for_reply_deposit: 10_000_000_000,
     };
-    let request = [
-        "New".encode(),
-        (config, pts_id, shuffle_vkey.encode(), decrypt_vkey.encode()).encode(),
-    ]
-    .concat();
+    let request = ["New".encode(), (config, pts_id, zk_program_id).encode()].concat();
 
     let (message_id, factory_program_id, _hash) = api
         .upload_program_bytes(
@@ -125,6 +138,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         starting_bank: 1000,
         time_per_move_ms: 15_000,
     };
+
     let request = [
         "PokerFactory".encode(),
         "CreateLobby".encode(),
@@ -136,7 +150,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         .await?;
     println!("GAS {:?}", gas);
 
-    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone()), value: 1_000_000_000_000);
+    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone(), None::<SignatureInfo>), value: 1_000_000_000_000);
     assert!(listener.message_processed(message_id).await?.succeed());
 
     Ok(())
@@ -174,18 +188,19 @@ async fn test_basic_workflow() -> Result<()> {
         .with(USERS_STR[2])
         .expect("Unable to change signer.");
 
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let session_for_account: Option<SignatureInfo> = None;
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
     println!("stage: {:?}", stage);
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
     println!("stage: {:?}", stage);
 
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
@@ -224,7 +239,7 @@ async fn test_basic_workflow() -> Result<()> {
         if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[..3].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);
@@ -238,16 +253,16 @@ async fn test_basic_workflow() -> Result<()> {
     // Flop
     // check: Raise -> Raise -> Call -> Call
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }));
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }));
+    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
     assert!(listener.message_processed(message_id).await?.succeed());
 
     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
@@ -283,7 +298,7 @@ async fn test_basic_workflow() -> Result<()> {
         if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[3..4].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);
@@ -312,7 +327,7 @@ async fn test_basic_workflow() -> Result<()> {
         if let Some((_, (_, proofs))) = entry {
             let proofs: Vec<_> = proofs[4..5].to_vec();
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No decryptions found for public key: {:?}", pk);
@@ -342,7 +357,7 @@ async fn test_basic_workflow() -> Result<()> {
 
         if let Some((_pk, instances)) = entry {
             let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
+            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances, session_for_account.clone()));
             assert!(listener.message_processed(message_id).await?.succeed());
         } else {
             panic!("No cards found for public key: {:?}", pk);
@@ -366,13 +381,14 @@ async fn all_players_check(
     program_id: &ProgramId,
     listener: &mut EventListener,
 ) -> Result<()> {
+    let session_for_account: Option<SignatureInfo> = None;
     for i in 0..3 {
         let api = api
             .clone()
             .with(USERS_STR[i])
             .expect("Unable to change signer.");
 
-        let message_id = send_request!(api: &api, program_id: *program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+        let message_id = send_request!(api: &api, program_id: *program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
         assert!(listener.message_processed(message_id).await?.succeed());
     }
     Ok(())

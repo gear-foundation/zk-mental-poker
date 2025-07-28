@@ -1,5 +1,5 @@
 use gstd::prog::ProgramGenerator;
-use poker_client::{SignatureInfo, ZkPublicKey};
+use poker_client::{SessionConfig, SignatureInfo, ZkPublicKey};
 use sails_rs::collections::{HashMap, HashSet};
 use sails_rs::gstd::msg;
 use sails_rs::prelude::*;
@@ -14,8 +14,7 @@ struct Storage {
     admins: HashSet<ActorId>,
     config: Config,
     pts_actor_id: ActorId,
-    vk_shuffle_bytes: Vec<u8>,
-    vk_decrypt_bytes: Vec<u8>,
+    zk_verification_id: ActorId,
 }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
@@ -61,20 +60,14 @@ pub enum Event {
 pub struct PokerFactoryService(());
 
 impl PokerFactoryService {
-    pub fn init(
-        config: Config,
-        pts_actor_id: ActorId,
-        vk_shuffle_bytes: Vec<u8>,
-        vk_decrypt_bytes: Vec<u8>,
-    ) -> Self {
+    pub fn init(config: Config, pts_actor_id: ActorId, zk_verification_id: ActorId) -> Self {
         unsafe {
             STORAGE = Some(Storage {
                 admins: HashSet::from([msg::source()]),
                 config,
                 lobbies: HashMap::new(),
                 pts_actor_id,
-                vk_shuffle_bytes,
-                vk_decrypt_bytes,
+                zk_verification_id,
             });
         }
         Self(())
@@ -135,14 +128,20 @@ impl PokerFactoryService {
         if balance < init_lobby.starting_bank {
             panic!("Low pts balance");
         }
+
+        let session_config = SessionConfig {
+            gas_to_delete_session: 10_000_000_000,
+            minimum_session_duration_ms: 180_000,
+            ms_per_block: 3_000,
+        };
         let payload = [
             "New".encode(),
             init_lobby.encode(),
+            session_config.encode(),
             storage.pts_actor_id.encode(),
             pk.encode(),
-            storage.vk_shuffle_bytes.clone(),
-            storage.vk_decrypt_bytes.clone(),
             session.encode(),
+            storage.zk_verification_id.encode(),
         ]
         .concat();
         let create_program_future = ProgramGenerator::create_program_bytes_with_gas_for_reply(
@@ -227,11 +226,5 @@ impl PokerFactoryService {
     }
     pub fn config(&self) -> Config {
         self.get().config.clone()
-    }
-    pub fn vk_shuffle_bytes(&self) -> Vec<u8> {
-        self.get().vk_shuffle_bytes.clone()
-    }
-    pub fn vk_decrypt_bytes(&self) -> Vec<u8> {
-        self.get().vk_decrypt_bytes.clone()
     }
 }

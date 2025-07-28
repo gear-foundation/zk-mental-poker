@@ -15,6 +15,7 @@ use std::path::Path;
 mod utils_gclient;
 use utils_gclient::zk_loader::ZkLoaderData;
 use utils_gclient::{build_player_card_disclosure, init_deck_and_card_map};
+use zk_verification_client::traits::*;
 const USERS: [u64; 6] = [42, 43, 44, 45, 46, 47];
 
 const BUILTIN_BLS381: ActorId = ActorId::new(hex!(
@@ -35,6 +36,8 @@ use gbuiltin_bls381::{
 use gstd::prelude::*;
 type ArkScale<T> = ark_scale::ArkScale<T, { ark_scale::HOST_CALL }>;
 type Gt = <Bls12_381 as Pairing>::TargetField;
+
+
 
 #[tokio::test]
 async fn test_basic_poker_workflow() {
@@ -534,6 +537,50 @@ async fn gtest_check_cancel_registration_waiting_participants() {
     assert_eq!(waiting_participants.len(), 0);
 }
 
+#[tokio::test]
+async fn gtest_agg_key_calc() {
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    // check length of the participants (old length)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 6);
+
+    // check length of the waiting participants state (1)
+    let new_player_id = 48;
+    env.remoting
+        .system()
+        .mint_to(new_player_id, 1_000_000_000_000_000);
+    let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
+    let new_player_pk = new_test_data.pks[5].1.clone();
+    env.register(new_player_id, new_player_pk).await;
+
+    // check length of the waiting participants state (1)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 1);
+
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+    ])
+    .await;
+
+    env.service_client
+        .cancel_registration(None)
+        .with_args(|args| args.with_actor_id(new_player_id.into()))
+        .send_recv(env.program_id)
+        .await
+        .unwrap();
+
+    // check length of the waiting participants state (0)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 0);
+}
 struct TestEnvironment {
     remoting: GTestRemoting,
     pts_id: ActorId,
@@ -685,6 +732,14 @@ impl TestEnvironment {
         let decrypt_vkey_bytes =
             ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
+        let zk_code_id = remoting.system().submit_code(zk_verification::WASM_BINARY);
+        let zk_factory = zk_verification_client::ZkVerificationFactory::new(remoting.clone());
+
+        let zk_program_id = zk_factory
+            .new(shuffle_vkey_bytes, decrypt_vkey_bytes)
+            .send_recv(zk_code_id, b"salt")
+            .await
+            .unwrap();
         let program_code_id = remoting.system().submit_code(poker::WASM_BINARY);
         let program_factory = poker_client::PokerFactory::new(remoting.clone());
 
@@ -706,9 +761,8 @@ impl TestEnvironment {
                 },
                 pts_id,
                 admin_pk.clone(),
-                shuffle_vkey_bytes,
-                decrypt_vkey_bytes,
                 None,
+                zk_program_id,
             )
             .send_recv(program_code_id, b"salt")
             .await

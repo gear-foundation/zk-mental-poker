@@ -6,13 +6,12 @@ use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use num_bigint::BigUint;
 use num_traits::Num;
-use poker_client::{
-    EncryptedCard, ProofBytes, VerificationVariables, VerifyingKeyBytes, ZkPublicKey,
-};
+use poker_client::{EncryptedCard, ProofBytes, VerificationVariables, ZkPublicKey};
 use serde::Deserialize;
 use std::fs;
 use std::ops::Neg;
 use std::str::FromStr;
+use zk_verification_client::VerifyingKeyBytes;
 
 // === Constants ===
 const FIELD_ELEMENT_SIZE: usize = 32;
