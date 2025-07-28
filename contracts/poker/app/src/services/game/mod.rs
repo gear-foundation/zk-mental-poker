@@ -461,6 +461,7 @@ impl PokerService {
 
         storage.participants.retain(|(id, info)| {
             if info.balance == 0 {
+                storage.agg_pub_key = substract_agg_pub_key(&storage.agg_pub_key, &info.pk);
                 self.emit_event(Event::RegistrationCanceled { player_id: *id })
                     .expect("Event Error");
                 return false;
