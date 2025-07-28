@@ -37,8 +37,6 @@ use gstd::prelude::*;
 type ArkScale<T> = ark_scale::ArkScale<T, { ark_scale::HOST_CALL }>;
 type Gt = <Bls12_381 as Pairing>::TargetField;
 
-
-
 #[tokio::test]
 async fn test_basic_poker_workflow() {
     let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
