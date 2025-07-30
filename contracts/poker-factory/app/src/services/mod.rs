@@ -157,7 +157,7 @@ impl PokerFactoryService {
             storage.config.lobby_code_id,
             payload,
             storage.config.gas_for_program,
-            1_000_000_000_000,
+            0,
             storage.config.gas_for_reply_deposit,
         )
         .unwrap_or_else(|e| panic(e));
