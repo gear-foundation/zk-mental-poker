@@ -19,7 +19,6 @@ static mut STORAGE: Option<Storage> = None;
 #[derive(Debug)]
 struct Storage {
     shuffle_verification_context: BatchVerificationContext,
-    decrypt_verificaiton_context: BatchVerificationContext,
 }
 pub struct ZkVerificationService(());
 
@@ -35,13 +34,9 @@ impl ZkVerificationService {
         Self(())
     }
 
-    pub fn init(vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
+    pub fn init(vk_shuffle_bytes: VerifyingKeyBytes) -> Self {
         unsafe {
             STORAGE = Some(Storage {
-                decrypt_verificaiton_context: BatchVerificationContext::new(
-                    &vk_decrypt_bytes,
-                    ActorId::from(ACTOR_ID),
-                ),
                 shuffle_verification_context: BatchVerificationContext::new(
                     &vk_shuffle_bytes,
                     ActorId::from(ACTOR_ID),
@@ -55,14 +50,6 @@ impl ZkVerificationService {
         let storage = self.get();
         storage
             .shuffle_verification_context
-            .verify_batch(instances)
-            .await;
-    }
-
-    pub async fn verify_decrypt(&mut self, instances: Vec<VerificationVariables>) {
-        let storage = self.get();
-        storage
-            .decrypt_verificaiton_context
             .verify_batch(instances)
             .await;
     }
@@ -179,6 +166,26 @@ impl BatchVerificationContext {
             verifying_key: VerifyingKey::from_bytes(vk_bytes),
             builtin_address,
         }
+    }
+
+    pub async fn verify(&self, c0: Vec<u8>, delta: Vec<u8>, pk: Vec<u8>, g2: Vec<u8>) {
+        let delta = CurvePointDeserializer::deserialize_g1(&delta);
+        let c0 = CurvePointDeserializer::deserialize_g1(&c0);
+        let pk = CurvePointDeserializer::deserialize_g2(&pk);
+        let g2 = CurvePointDeserializer::deserialize_g2(&g2);
+
+        let delta_neg = -delta;
+
+        let a: ArkScale<Vec<G1Affine>> = vec![delta_neg, c0].into();
+        let b: ArkScale<Vec<G2Affine>> = vec![g2, pk].into();
+
+        let miller_out =
+            PairingOperations::multi_miller_loop(a.encode(), b.encode(), self.builtin_address)
+                .await;
+
+        let exp = PairingOperations::final_exponentiation(miller_out, self.builtin_address).await;
+
+        assert_eq!(exp.0, Gt::ONE);
     }
 
     /// Performs batch verification of multiple zk-SNARK proofs

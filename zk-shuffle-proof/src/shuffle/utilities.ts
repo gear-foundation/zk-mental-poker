@@ -1,13 +1,21 @@
 import { BigNumber } from "ethers";
+import { blake2b } from '@noble/hashes/blake2';
+import { utf8ToBytes } from '@noble/hashes/utils';
+import { createHash } from 'crypto';
+
 const Scalar = require("ffjavascript").Scalar;
 // @ts-ignore
 import { F1Field } from "ffjavascript";
 import { randomBytes } from 'crypto';
 
-const q = BigInt("52435875175126190479447740508185965837690552500527637822603658699938581184513"); // BLS12-381 scalar field
+const q = BigInt("52435875175126190479447740508185965837690552500527637822603658699938581184513"); // BLS12-381 base field
+const scalarField = BigInt("13108968793781547619861935127046491459309155893440570251786403306729687672801"); // BLS12-381 scalar field
 const F = new F1Field(q);
 const a = BigInt(-5);
 const d = 45022363124591815672509500913686876175488063829319466900776701791074614335719n;
+
+const FQ_BYTES = 32; 
+const FR_BYTES = 32;
 
 const base = {
   X: BigInt("0x29c132cc2c0b34c5743711777bbe42f32b79c022ad998465e1e71866a252ae18"),
@@ -19,6 +27,90 @@ const base = {
 export type BabyJub = any;
 export type EC = any;
 export type Deck = any;
+
+function toFixedLE(x: bigint, len: number): Uint8Array {
+  let hex = x.toString(16);
+  if (hex.length % 2) hex = '0' + hex;
+  const be = Uint8Array.from(Buffer.from(hex, 'hex'));
+  const le = new Uint8Array(len);
+  const n = Math.min(len, be.length);
+  for (let i = 0; i < n; i++) le[i] = be[be.length - 1 - i];
+  return le;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+function bytesToBigIntLE(a: Uint8Array): bigint {
+  let x = 0n, mul = 1n;
+  for (const b of a) { x += BigInt(b) * mul; mul <<= 8n; }
+  return x;
+}
+
+export function hashToFr(
+  F: any, 
+  points: { X: bigint, Y: bigint, Z: bigint }[]
+): bigint {
+  const chunks: Uint8Array[] = [];
+
+  for (const P of points) {
+    const zInv = F.inv(P.Z);
+    const x = F.mul(P.X, zInv);
+    const y = F.mul(P.Y, zInv);
+    chunks.push(toFixedLE(x, FQ_BYTES));
+    chunks.push(toFixedLE(y, FQ_BYTES));
+  }
+
+  const digest = blake2b(concatBytes(chunks), { dkLen: 64 });   
+  const c = bytesToBigIntLE(digest.slice(0, FR_BYTES)) % scalarField; 
+  return c;
+}
+
+export function cpProve(
+  F: any, a: bigint, d: bigint,
+  g: { X: bigint, Y: bigint, Z: bigint }, 
+  pk: { X: bigint, Y: bigint, Z: bigint }, 
+  c0: { X: bigint, Y: bigint, Z: bigint }, 
+  dec: { X: bigint, Y: bigint, Z: bigint }, 
+  sk: bigint
+): { A: { X: bigint, Y: bigint, Z: bigint }; B: { X: bigint, Y: bigint, Z: bigint }; z: bigint } {
+  const r = generateRandomScalar(50);
+
+  const A = scalarMul(F, a, d, g,  r);   // r·g
+  const B = scalarMul(F, a, d, c0, r);   // r·c1
+
+  const c = hashToFr(F, [g, pk, c0, dec, A, B]);
+  const z = (r + c * sk) % scalarField;
+  return { A, B, z };
+}
+
+export function cpVerify(
+  F: any, a: bigint, d: bigint,
+  g: { X: bigint, Y: bigint, Z: bigint }, 
+  pk: { X: bigint, Y: bigint, Z: bigint }, 
+  c0: { X: bigint, Y: bigint, Z: bigint }, 
+  dec: { X: bigint, Y: bigint, Z: bigint },
+  proof: { A: { X: bigint, Y: bigint, Z: bigint }; B: { X: bigint, Y: bigint, Z: bigint }; z: bigint }
+): boolean {
+  const c = hashToFr(F, [g, pk, c0, dec, proof.A, proof.B]);
+  const lhs1 = scalarMul(F, a, d, g,  proof.z);
+  const rhs1 = projectiveAdd(F, a, d, proof.A, scalarMul(F, a, d, pk, c));
+
+  const lhs2 = scalarMul(F, a, d, c0, proof.z);
+  const rhs2 = projectiveAdd(F, a, d, proof.B, scalarMul(F, a, d, dec,  c));
+
+  return eqProj(F, lhs1, rhs1) && eqProj(F, lhs2, rhs2);
+}
+
+function eqProj(F: any, P: { X: bigint, Y: bigint, Z: bigint }, Q: { X: bigint, Y: bigint, Z: bigint }): boolean {
+  return F.mul(P.X, Q.Z) === F.mul(Q.X, P.Z)
+      && F.mul(P.Y, Q.Z) === F.mul(Q.Y, P.Z);
+}
 
 export function generateRandomScalar(numBits: number): bigint {
   const byteLength = Math.ceil(numBits / 8);

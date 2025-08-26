@@ -7,15 +7,14 @@ mod curve;
 mod utils;
 pub mod verify;
 use crate::services::game::curve::{
-    calculate_agg_pub_key, decrypt_point, get_cards_and_decryptions, get_decrypted_points,
-    init_deck_and_card_map, substract_agg_pub_key, verify_cards,
+    calculate_agg_pub_key, init_deck_and_card_map, substract_agg_pub_key,
 };
 use crate::services::session::Storage as SessionStorage;
+use ark_ec::PrimeGroup;
 use ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
 use pts_client::pts::io as pts_io;
+pub use verify::{ChaumPedersenProofBytes, ShuffleChainValidator};
 use zk_verification_client::zk_verification::io as zk_io;
-
-pub use verify::ShuffleChainValidator;
 
 use zk_verification_client::VerificationVariables;
 
@@ -33,8 +32,8 @@ struct Storage {
     zk_verification_id: ActorId,
     encrypted_deck: Option<Vec<EncryptedCard>>,
     encrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
+    submitted_decrypters: HashSet<ActorId>,
     partially_decrypted_cards: HashMap<ActorId, [EncryptedCard; 2]>,
-    partial_table_card_decryptions: HashMap<EncryptedCard, PartialDecryptionsByCard>,
     revealed_table_cards: Vec<Card>,
     original_card_map: HashMap<EdwardsProjective, Card>,
     original_deck: Vec<EdwardsProjective>,
@@ -106,6 +105,14 @@ pub struct Participant {
     pk: ZkPublicKey,
 }
 
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct PartialDec {
+    pub c0: [Vec<u8>; 3],
+    pub delta_c0: [Vec<u8>; 3],
+    pub proof: ChaumPedersenProofBytes,
+}
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq, Hash)]
 #[codec(crate = sails_rs::scale_codec)]
 #[scale_info(crate = sails_rs::scale_info)]
@@ -202,11 +209,11 @@ impl PokerService {
                 revealed_table_cards: Vec::new(),
                 original_card_map,
                 original_deck,
-                partial_table_card_decryptions: HashMap::new(),
                 pts_actor_id,
                 factory_actor_id: msg::source(),
                 agg_pub_key: pk,
                 revealed_players: HashMap::new(),
+                submitted_decrypters: HashSet::new(),
             });
         }
         Self(())
@@ -302,7 +309,6 @@ impl Storage {
         self.partially_decrypted_cards = HashMap::new();
         self.revealed_table_cards = Vec::new();
         self.revealed_players = HashMap::new();
-        self.partial_table_card_decryptions = HashMap::new();
         self.betting_bank = HashMap::new();
         self.all_in_players = Vec::new();
         self.already_invested_in_the_circle = HashMap::new();
@@ -735,39 +741,91 @@ impl PokerService {
             .expect("Event Invocation Error");
     }
 
-    pub async fn submit_all_partial_decryptions(&mut self, instances: Vec<VerificationVariables>) {
-        let storage = self.get_mut();
-
-        let cards_by_player = get_decrypted_points(&instances, &storage.encrypted_cards);
-
-        let request = zk_io::VerifyDecrypt::encode_call(instances);
-        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
-            .expect("Error in async message to ZK contract")
-            .await
-            .expect("PTS: Error ZK decrypt verification");
-
-        for (player, cards) in cards_by_player {
-            storage.partially_decrypted_cards.insert(player, cards);
-        }
-
-        storage.status = Status::Play {
-            stage: Stage::PreFlop,
-        };
-        if let Some(betting) = &mut storage.betting {
-            betting.last_active_time = Some(exec::block_timestamp());
-        }
-
-        self.emit_event(Event::AllPartialDecryptionsSubmited)
-            .expect("Event Invocation Error");
-    }
-
-    pub async fn submit_table_partial_decryptions(
+    pub async fn submit_partial_decryptions(
         &mut self,
-        instances: Vec<VerificationVariables>,
+        player_decryptions: Vec<PartialDec>,
         session_for_account: Option<ActorId>,
     ) {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
+        if !storage.submitted_decrypters.insert(player_id) {
+            panic!("Already submitted decryptions")
+        }
+        let amounts_of_players = storage.participants.len();
+        assert_eq!(
+            player_decryptions.len(),
+            amounts_of_players * 2 - 2,
+            "Not enough decryptions"
+        );
+        let (_, participant) = storage
+            .participants
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .expect("Participant not found");
+        let pk = curve::deserialize_public_key(&participant.pk);
+        let g = EdwardsProjective::generator();
+        for PartialDec {
+            c0,
+            delta_c0,
+            proof,
+        } in player_decryptions
+        {
+            let c0_point = curve::deserialize_bandersnatch_coords(&c0);
+            let delta_c0_neg = curve::deserialize_bandersnatch_coords(&delta_c0);
+            let delta_c0 = -delta_c0_neg;
+            let proof = proof.into_proof();
+            assert!(
+                verify::verify_chaum_pedersen(g, pk, c0_point, delta_c0, &proof),
+                "Decryption verification failed"
+            );
+            let (owner, idx) = locate_owner_and_index(&storage.encrypted_cards, &c0)
+                .expect("Target card not found for given c0");
+
+            let entry = storage
+                .partially_decrypted_cards
+                .entry(owner)
+                .or_insert_with(|| {
+                    storage
+                        .encrypted_cards
+                        .get(&owner)
+                        .expect("Missing owner in encrypted_cards")
+                        .clone()
+                });
+
+            let current_c1_point = curve::deserialize_bandersnatch_coords(&entry[idx].c1);
+            let new_c1_point = current_c1_point + delta_c0_neg;
+            entry[idx].c1 = curve::serialize_bandersnatch_coords(&new_c1_point);
+        }
+
+        if storage.submitted_decrypters.len() == amounts_of_players {
+            storage.status = Status::Play {
+                stage: Stage::PreFlop,
+            };
+            if let Some(betting) = &mut storage.betting {
+                betting.last_active_time = Some(exec::block_timestamp());
+            }
+            storage.submitted_decrypters.clear();
+            self.emit_event(Event::AllPartialDecryptionsSubmited)
+                .expect("Event Invocation Error");
+        }
+    }
+
+    pub async fn submit_table_partial_decryptions(
+        &mut self,
+        player_decryptions: Vec<PartialDec>,
+        session_for_account: Option<ActorId>,
+    ) {
+        let storage = self.get_mut();
+        let player_id = get_player(&session_for_account);
+        let (_, participant) = storage
+            .participants
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .expect("Participant not found");
+        if !storage.submitted_decrypters.insert(player_id) {
+            panic!("Already submitted decryptions")
+        }
+        let amounts_of_players = storage.participants.len();
         let (base_index, expected_count, next_stage) = match &storage.status {
             Status::Play { stage } => match stage {
                 Stage::WaitingTableCardsAfterPreFlop => (0, 3, Some(Stage::Flop)),
@@ -786,57 +844,43 @@ impl PokerService {
             _ => panic!("Wrong status"),
         };
 
-        if instances.len() != expected_count {
+        if player_decryptions.len() != expected_count {
             panic!("Wrong amount of proofs");
         }
-        let decryptions = get_cards_and_decryptions(&storage.table_cards, &instances);
 
-        let request = zk_io::VerifyDecrypt::encode_call(instances);
-        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
-            .expect("Error in async message to ZK contract")
-            .await
-            .expect("PTS: Error ZK decrypt verification");
+        let pk = curve::deserialize_public_key(&participant.pk);
+        let g = EdwardsProjective::generator();
 
-        if !storage.participants.iter().any(|(id, _)| *id == player_id) {
-            panic!("Not participant");
+        for PartialDec {
+            c0,
+            delta_c0,
+            proof,
+        } in player_decryptions
+        {
+            let c0_point = curve::deserialize_bandersnatch_coords(&c0);
+            let delta_c0_neg = curve::deserialize_bandersnatch_coords(&delta_c0);
+            let delta_c0 = -delta_c0_neg;
+            let proof = proof.into_proof();
+            assert!(
+                verify::verify_chaum_pedersen(g, pk, c0_point, delta_c0, &proof),
+                "Decryption verification failed"
+            );
+            let idx =
+                find_table_idx_in_window(&storage.table_cards, base_index, expected_count, &c0)
+                    .expect("Target table card not found for given c0");
+            let current_c1_point =
+                curve::deserialize_bandersnatch_coords(&storage.table_cards[idx].c1);
+            let new_c1_point = current_c1_point + delta_c0_neg;
+            storage.table_cards[idx].c1 = curve::serialize_bandersnatch_coords(&new_c1_point);
         }
 
-        if decryptions.len() != expected_count {
-            panic!("Wrong count");
-        }
-
-        let expected_cards = &storage.table_cards[base_index..base_index + expected_count];
-
-        for (card, decryption) in decryptions {
-            assert!(expected_cards.contains(&card), "Wrong card");
-            storage
-                .partial_table_card_decryptions
-                .entry(card)
-                .or_default()
-                .add(player_id, decryption);
-        }
-
-        let first_card = &storage.table_cards[base_index];
-
-        let all_submitted = storage
-            .partial_table_card_decryptions
-            .get(first_card)
-            .map(|by_card| by_card.participants.len() == storage.participants.len())
-            .unwrap_or(false);
+        let all_submitted = storage.submitted_decrypters.len() == amounts_of_players;
         if all_submitted {
             let mut revealed_cards = Vec::with_capacity(expected_count);
             for i in base_index..base_index + expected_count {
-                let encrypted_card = &storage.table_cards[i];
+                let c1_point = curve::deserialize_bandersnatch_coords(&storage.table_cards[i].c1);
 
-                let by_card = storage
-                    .partial_table_card_decryptions
-                    .get(encrypted_card)
-                    .expect("Decryptions must exist for this card");
-
-                let partials = by_card.partials.to_vec();
-
-                if let Some(card) =
-                    decrypt_point(&storage.original_card_map, encrypted_card, partials)
+                if let Some(card) = curve::find_card_by_point(&storage.original_card_map, &c1_point)
                 {
                     revealed_cards.push(card);
                 } else {
@@ -855,6 +899,7 @@ impl PokerService {
             if let Some(betting) = &mut storage.betting {
                 betting.last_active_time = Some(exec::block_timestamp());
             }
+            storage.submitted_decrypters.clear();
         }
 
         self.emit_event(Event::TablePartialDecryptionsSubmited)
@@ -1119,36 +1164,61 @@ impl PokerService {
 
     pub async fn card_disclosure(
         &mut self,
-        instances: Vec<(Card, VerificationVariables)>,
+        player_decryptions: Vec<PartialDec>,
         session_for_account: Option<ActorId>,
     ) {
         let storage = self.get_mut();
-        // if storage.status != Status::WaitingForCardsToBeDisclosed {
-        //     panic("Wrong status")
-        // }
-        let player = get_player(&session_for_account);
 
-        let partially_decrypted_cards = storage
+        let player_id = get_player(&session_for_account);
+        assert_eq!(player_decryptions.len(), 2, "Not enough decryptions");
+        let (_, participant) = storage
+            .participants
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .expect("Participant not found");
+        let cards_entry = storage
             .partially_decrypted_cards
-            .get(&player)
-            .expect("Not in game");
+            .get(&player_id)
+            .expect("Cards not found");
+        let pk = curve::deserialize_public_key(&participant.pk);
+        let g = EdwardsProjective::generator();
 
-        verify_cards(
-            partially_decrypted_cards,
-            instances.clone(),
-            &storage.original_card_map,
-        );
+        let mut cards = Vec::new();
+        for PartialDec {
+            c0,
+            delta_c0,
+            proof,
+        } in player_decryptions
+        {
+            let c0_point = curve::deserialize_bandersnatch_coords(&c0);
+            let delta_c0_neg = curve::deserialize_bandersnatch_coords(&delta_c0);
+            let delta_c0 = -delta_c0_neg;
+            let proof = proof.into_proof();
+            assert!(
+                verify::verify_chaum_pedersen(g, pk, c0_point, delta_c0, &proof),
+                "Decryption verification failed"
+            );
 
-        let only_proofs = vec![instances[0].1.clone(), instances[1].1.clone()];
+            let idx = if curve::compare_points(&cards_entry[0].c0, &c0) {
+                0
+            } else if curve::compare_points(&cards_entry[1].c0, &c0) {
+                1
+            } else {
+                panic!("Target hole card not found for given c0");
+            };
+            let current_c1_point = curve::deserialize_bandersnatch_coords(&cards_entry[idx].c1);
+            let new_c1_point = current_c1_point + delta_c0_neg;
+            if let Some(card) = curve::find_card_by_point(&storage.original_card_map, &new_c1_point)
+            {
+                cards.push(card);
+            } else {
+                panic!("Failed to decrypt card");
+            }
+        }
 
-        let request = zk_io::VerifyDecrypt::encode_call(only_proofs);
-        msg::send_bytes_for_reply(storage.zk_verification_id, request, 0, 0)
-            .expect("Error in async message to ZK contract")
-            .await
-            .expect("PTS: Error ZK decrypt verification");
-
-        let cards = (instances[0].0.clone(), instances[1].0.clone());
-        storage.revealed_players.insert(player, cards);
+        storage
+            .revealed_players
+            .insert(player_id, (cards[0].clone(), cards[1].clone()));
 
         let expected_players: HashSet<ActorId> = storage
             .active_participants
@@ -1284,4 +1354,33 @@ impl PokerService {
     pub fn agg_pub_key(&self) -> ZkPublicKey {
         self.get().agg_pub_key.clone()
     }
+}
+
+fn locate_owner_and_index(
+    encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
+    c0_bytes: &[Vec<u8>; 3],
+) -> Option<(ActorId, usize)> {
+    for (actor, cards) in encrypted_cards.iter() {
+        for (i, card) in cards.iter().enumerate().take(2) {
+            if curve::compare_points(&card.c0, c0_bytes) {
+                return Some((*actor, i));
+            }
+        }
+    }
+    None
+}
+
+fn find_table_idx_in_window(
+    table: &[EncryptedCard],
+    start: usize,
+    count: usize,
+    c0: &[Vec<u8>; 3],
+) -> Option<usize> {
+    for i in 0..count {
+        let idx = start + i;
+        if curve::compare_points(&table[idx].c0, c0) {
+            return Some(idx);
+        }
+    }
+    None
 }

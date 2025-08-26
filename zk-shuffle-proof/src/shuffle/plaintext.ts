@@ -16,14 +16,6 @@ export function elgamalEncrypt(F: any, a: bigint, d: bigint, G: any, pk: any, ms
 }
 
 
-/// Computes ElGamal Decryption.
-export function elgamalDecrypt(babyJub: BabyJub, c0: EC, c1: EC, sk: bigint): EC {
-  // Scalar Field Size of Baby JubJub curve
-  const r = 2736030358979909402780800718157159386076813972158567259200215660948447373041n;
-  // c1 - sk * c0
-  return babyJub.addPoint(c1, babyJub.mulPointEscalar(c0, r - sk));
-}
-
 export function generatePermutation(n: number): number[] {
   const arr = Array.from({ length: n }, (_, i) => i);
   for (let i = n - 1; i > 0; i--) {

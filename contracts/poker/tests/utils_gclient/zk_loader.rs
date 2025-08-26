@@ -2,6 +2,7 @@ use ark_bls12_381::Bls12_381;
 use ark_bls12_381::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ed_on_bls12_381_bandersnatch::Fr as edFr;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use num_bigint::BigUint;
@@ -57,6 +58,16 @@ struct ECPointJson {
     y: String,
     #[serde(rename = "Z")]
     z: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SecretKeyJson {
+    pub index: usize,
+    pub sk: String,
+}
+
+pub struct ZkSecretKey {
+    pub scalar: edFr,
 }
 
 impl From<ECPointJson> for [Vec<u8>; 3] {
@@ -135,6 +146,19 @@ impl ZkLoaderData {
             .map(|pk| (pk.index, ECPointConverter::to_public_key(&pk.pk)))
             .collect()
     }
+
+    pub fn load_player_secret_keys(path: &str) -> Vec<(usize, ZkSecretKey)> {
+        let items: Vec<SecretKeyJson> = Self::read_json(path);
+
+        items
+            .into_iter()
+            .map(|sk| {
+                let scalar = edFr::from_str(&sk.sk).expect("Invalid scalar");
+                (sk.index, ZkSecretKey { scalar })
+            })
+            .collect()
+    }
+
     pub fn load_partial_decrypt_proofs(path: &str) -> Vec<VerificationVariables> {
         Self::load_batch_proofs(path)
     }

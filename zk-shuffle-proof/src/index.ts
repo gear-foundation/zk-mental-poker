@@ -13,11 +13,13 @@ export {
     generateRandomScalar,
     projectiveAdd,
     scalarMul,
+    hashToFr,
+    cpProve, 
+    cpVerify,
   } from './shuffle/utilities';
   
   export {
     elgamalEncrypt,
-    elgamalDecrypt, 
     elgamalEncryptDeck,
     permuteMatrix,
     generatePermutation

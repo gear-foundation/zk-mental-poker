@@ -1,13 +1,18 @@
 use crate::services::game::EdwardsProjective;
 use crate::services::game::{
     EncryptedCard, ZkPublicKey,
-    curve::{compare_points, compare_projective_and_coords, compare_public_keys},
+    curve::{
+        compare_points, compare_projective_and_coords, compare_public_keys,
+        deserialize_bandersnatch_coords,
+    },
 };
-use ark_ed_on_bls12_381_bandersnatch::Fq;
-use ark_ff::{One, PrimeField};
+use ark_ec::CurveGroup;
+
+use ark_ed_on_bls12_381_bandersnatch::{Fq, Fr};
+use ark_ff::{BigInteger, One, PrimeField};
+use blake2::{Blake2b512, Digest};
 use sails_rs::prelude::*;
 use zk_verification_client::VerificationVariables;
-
 /// Card deck configuration constants
 #[derive(Debug, Clone, Copy)]
 pub struct DeckConfig {
@@ -139,7 +144,6 @@ impl ShuffleChainValidator {
         if !compare_public_keys(expected_pub_key, &first_parsed.public_key) {
             panic!("Public key mismatch");
         }
-
         Self::validate_initial_deck_matches(original_deck, &first_parsed.original_deck);
 
         let mut current_deck = first_parsed.permuted_deck;
@@ -185,4 +189,63 @@ impl ShuffleChainValidator {
             }
         }
     }
+}
+
+fn hash_to_fr(points: &[EdwardsProjective]) -> Fr {
+    let mut hasher = Blake2b512::new();
+
+    for p in points {
+        let affine = p.into_affine();
+        let x_bytes = affine.x.into_bigint().to_bytes_le();
+        let y_bytes = affine.y.into_bigint().to_bytes_le();
+
+        hasher.update(x_bytes);
+        hasher.update(y_bytes);
+    }
+
+    let hash_bytes = hasher.finalize();
+    Fr::from_le_bytes_mod_order(&hash_bytes[..32])
+}
+
+pub struct ChaumPedersenProof {
+    pub a: EdwardsProjective,
+    pub b: EdwardsProjective,
+    pub z: Fr,
+}
+
+#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub struct ChaumPedersenProofBytes {
+    pub a: [Vec<u8>; 3],
+    pub b: [Vec<u8>; 3],
+    pub z: Vec<u8>,
+}
+
+impl ChaumPedersenProofBytes {
+    pub fn into_proof(self) -> ChaumPedersenProof {
+        let a = deserialize_bandersnatch_coords(&self.a);
+        let b = deserialize_bandersnatch_coords(&self.b);
+        let z = Fr::from_le_bytes_mod_order(&self.z);
+
+        ChaumPedersenProof { a, b, z }
+    }
+}
+
+pub fn verify_chaum_pedersen(
+    g: EdwardsProjective,
+    pk: EdwardsProjective,
+    c0: EdwardsProjective,
+    delta_c0: EdwardsProjective,
+    proof: &ChaumPedersenProof,
+) -> bool {
+    let c = hash_to_fr(&[g, pk, c0, delta_c0, proof.a, proof.b]);
+
+    let lhs1 = g * proof.z;
+    let rhs1 = proof.a + pk * c;
+
+    let lhs2 = c0 * proof.z;
+    let rhs2 = proof.b + delta_c0 * c;
+
+    lhs1 == rhs1 && lhs2 == rhs2
 }
