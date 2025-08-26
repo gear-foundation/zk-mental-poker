@@ -5,7 +5,6 @@ import { toCipherCards, findCardByPoint } from "../utils/cards.js";
 import { scalarMul, cpProve, cpVerify, projectiveAdd } from "zk-shuffle-proof";
 import { decodeAddress } from "@gear-js/api";
 
-// отправка частичных декриптов + CP-доказательств
 export async function partialDecrypt({
   program, players, playerHands, F, a, d, base, keyrings
 }: any) {
@@ -29,7 +28,6 @@ export async function partialDecrypt({
   }
 }
 
-// локальное финальное раскрытие двух карт на игрока
 export async function finalDecryptAndShow({
   program, players, keyrings, F, a, d, cardMap
 }: any) {
