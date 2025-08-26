@@ -38,7 +38,8 @@ jobs:
     - name: Install wasm-opt (binaryen)
       run: |
         sudo apt-get update
-        sudo apt-get install -y binaryen
+        sudo apt-get install -y binaryen musl-tools
+        rustup target add x86_64-unknown-linux-musl
         
     - name: Check formatting
       run: cargo fmt --all --check
@@ -48,8 +49,8 @@ jobs:
 
     - name: Run tests
       env:
-        RUSTFLAGS: "-Cforce-frame-pointers=yes -Clink-arg=-Wl,--no-as-needed -Clink-arg=-lc"
-      run: cargo test -r
+        RUSTFLAGS: "-Cforce-frame-pointers=yes"
+      run: cargo test -r --target x86_64-unknown-linux-musl
 
     - name: Build project
       run: cargo build --release
