@@ -1361,8 +1361,8 @@ fn locate_owner_and_index(
     c0_bytes: &[Vec<u8>; 3],
 ) -> Option<(ActorId, usize)> {
     for (actor, cards) in encrypted_cards.iter() {
-        for i in 0..2 {
-            if curve::compare_points(&cards[i].c0, c0_bytes) {
+        for (i, card) in cards.iter().enumerate().take(2) {
+            if curve::compare_points(&card.c0, c0_bytes) {
                 return Some((*actor, i));
             }
         }
