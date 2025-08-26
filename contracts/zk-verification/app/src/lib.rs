@@ -7,8 +7,8 @@ pub struct ZkVerificationProgram(());
 #[sails_rs::program]
 impl ZkVerificationProgram {
     // Program's constructor
-    pub fn new(vk_shuffle_bytes: VerifyingKeyBytes, vk_decrypt_bytes: VerifyingKeyBytes) -> Self {
-        ZkVerificationService::init(vk_shuffle_bytes, vk_decrypt_bytes);
+    pub fn new(vk_shuffle_bytes: VerifyingKeyBytes) -> Self {
+        ZkVerificationService::init(vk_shuffle_bytes);
         Self(())
     }
 

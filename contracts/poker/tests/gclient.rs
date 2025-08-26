@@ -20,16 +20,15 @@ use std::fs;
 
 use utils_gclient::*;
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct TurnManager {
-    active_ids: Vec<ActorId>,
-    turn_index: u64,
-}
+// #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+// #[codec(crate = sails_rs::scale_codec)]
+// #[scale_info(crate = sails_rs::scale_info)]
+// pub struct TurnManager {
+//     active_ids: Vec<ActorId>,
+//     turn_index: u64,
+// }
 
 #[tokio::test]
-#[ignore]
 async fn upload_contracts_to_testnet() -> Result<()> {
     // let api = GearApi::dev().await?;
     let api = GearApi::vara_testnet().await?;
@@ -39,8 +38,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     println!("Upload zk verification contract");
     let path = "../target/wasm32-gear/release/zk_verification.opt.wasm";
     let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
-    let decrypt_vkey = ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
-    let request = ["New".encode(), (shuffle_vkey, decrypt_vkey).encode()].concat();
+    let request = ["New".encode(), (shuffle_vkey).encode()].concat();
 
     let (message_id, zk_program_id, _hash) = api
         .upload_program_bytes(
@@ -53,6 +51,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         .await
         .expect("Error upload program bytes");
     assert!(listener.message_processed(message_id).await?.succeed());
+    println!("zk_program_id {:?}", zk_program_id);
 
     let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
 
@@ -165,272 +164,238 @@ pub struct Config {
     pub gas_for_reply_deposit: u64,
 }
 
-#[tokio::test]
-#[ignore]
-async fn test_basic_workflow() -> Result<()> {
-    let api = GearApi::dev().await?;
+// #[tokio::test]
+// #[ignore]
+// async fn test_basic_workflow() -> Result<()> {
+//     let api = GearApi::dev().await?;
 
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
 
-    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+//     let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
 
-    let api_0 = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
-    let api_1 = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
-    let api_2 = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
+//     let api_0 = api
+//         .clone()
+//         .with(USERS_STR[0])
+//         .expect("Unable to change signer.");
+//     let api_1 = api
+//         .clone()
+//         .with(USERS_STR[1])
+//         .expect("Unable to change signer.");
+//     let api_2 = api
+//         .clone()
+//         .with(USERS_STR[2])
+//         .expect("Unable to change signer.");
 
-    let session_for_account: Option<SignatureInfo> = None;
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
+//     let session_for_account: Option<SignatureInfo> = None;
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
 
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(
-        status,
-        Status::Play {
-            stage: Stage::WaitingTableCardsAfterPreFlop
-        }
-    );
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(
+//         status,
+//         Status::Play {
+//             stage: Stage::WaitingTableCardsAfterPreFlop
+//         }
+//     );
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
 
-    assert_eq!(stage.last_active_time, None);
-    assert_eq!(stage.acted_players, vec![]);
-    assert_eq!(stage.current_bet, 0);
+//     assert_eq!(stage.last_active_time, None);
+//     assert_eq!(stage.acted_players, vec![]);
+//     assert_eq!(stage.current_bet, 0);
 
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 990);
-    assert_eq!(participants[1].1.balance, 990);
-    assert_eq!(participants[2].1.balance, 990);
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 990);
+//     assert_eq!(participants[1].1.balance, 990);
+//     assert_eq!(participants[2].1.balance, 990);
 
-    // decrypt table cards (first 3 cards)
-    println!("decrypt 3 cards after preflop");
-    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
-        "tests/test_data/table_decryptions_after_preflop.json",
-    );
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
+//     // decrypt table cards (first 3 cards)
+//     println!("decrypt 3 cards after preflop");
+//     let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+//         "tests/test_data/table_decryptions_after_preflop.json",
+//     );
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[..3].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[..3].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
 
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after preflop: {:?}", table_cards);
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+//     println!("table_cards after preflop: {:?}", table_cards);
 
-    // Flop
-    // check: Raise -> Raise -> Call -> Call
+//     // Flop
+//     // check: Raise -> Raise -> Call -> Call
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call, session_for_account.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(
-        status,
-        Status::Play {
-            stage: Stage::WaitingTableCardsAfterFlop
-        }
-    );
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(
+//         status,
+//         Status::Play {
+//             stage: Stage::WaitingTableCardsAfterFlop
+//         }
+//     );
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
 
-    assert_eq!(stage.last_active_time, None);
-    assert_eq!(stage.acted_players, vec![]);
-    assert_eq!(stage.current_bet, 0);
+//     assert_eq!(stage.last_active_time, None);
+//     assert_eq!(stage.acted_players, vec![]);
+//     assert_eq!(stage.current_bet, 0);
 
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 890);
-    assert_eq!(participants[1].1.balance, 890);
-    assert_eq!(participants[2].1.balance, 890);
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 890);
+//     assert_eq!(participants[1].1.balance, 890);
+//     assert_eq!(participants[2].1.balance, 890);
 
-    // decrypt table cards (4th card)
-    println!("decrypt 1 card after flop");
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
+//     // decrypt table cards (4th card)
+//     println!("decrypt 1 card after flop");
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[3..4].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[3..4].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
 
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after flop: {:?}", table_cards);
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+//     println!("table_cards after flop: {:?}", table_cards);
 
-    all_players_check(&api, &program_id, &mut listener).await?;
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    assert_eq!(
-        status,
-        Status::Play {
-            stage: Stage::WaitingTableCardsAfterTurn
-        }
-    );
+//     all_players_check(&api, &program_id, &mut listener).await?;
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     assert_eq!(
+//         status,
+//         Status::Play {
+//             stage: Stage::WaitingTableCardsAfterTurn
+//         }
+//     );
 
-    println!("decrypt 1 card after turn");
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
+//     println!("decrypt 1 card after turn");
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[4..5].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[4..5].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs, session_for_account.clone()));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
 
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after turn: {:?}", table_cards);
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+//     println!("table_cards after turn: {:?}", table_cards);
 
-    all_players_check(&api, &program_id, &mut listener).await?;
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
+//     all_players_check(&api, &program_id, &mut listener).await?;
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(status, Status::WaitingForCardsToBeDisclosed);
 
-    println!("Players reveal their cards..");
+//     println!("Players reveal their cards..");
 
-    let player_cards =
-        ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
+//     let player_cards =
+//         ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
 
-    let (_, card_map) = init_deck_and_card_map();
+//     let (_, card_map) = init_deck_and_card_map();
 
-    let hands = build_player_card_disclosure(player_cards, &card_map);
+//     let hands = build_player_card_disclosure(player_cards, &card_map);
 
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
 
-        if let Some((_pk, instances)) = entry {
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances, session_for_account.clone()));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No cards found for public key: {:?}", pk);
-        }
-    }
+//         if let Some((_pk, instances)) = entry {
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances, session_for_account.clone()));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No cards found for public key: {:?}", pk);
+//         }
+//     }
 
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(
-        status,
-        Status::Finished {
-            pots: vec![(330, vec![api_1.get_actor_id()])]
-        }
-    );
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(
+//         status,
+//         Status::Finished {
+//             pots: vec![(330, vec![api_1.get_actor_id()])]
+//         }
+//     );
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-async fn all_players_check(
-    api: &GearApi,
-    program_id: &ProgramId,
-    listener: &mut EventListener,
-) -> Result<()> {
-    let session_for_account: Option<SignatureInfo> = None;
-    for i in 0..3 {
-        let api = api
-            .clone()
-            .with(USERS_STR[i])
-            .expect("Unable to change signer.");
+// async fn all_players_check(
+//     api: &GearApi,
+//     program_id: &ProgramId,
+//     listener: &mut EventListener,
+// ) -> Result<()> {
+//     let session_for_account: Option<SignatureInfo> = None;
+//     for i in 0..3 {
+//         let api = api
+//             .clone()
+//             .with(USERS_STR[i])
+//             .expect("Unable to change signer.");
 
-        let message_id = send_request!(api: &api, program_id: *program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
-        assert!(listener.message_processed(message_id).await?.succeed());
-    }
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_time_limit() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
-    let time_skip = time::Duration::from_secs(60);
-    sleep(time_skip);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let api = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(
-        status,
-        Status::Finished {
-            pots: vec![(15, vec![api.get_actor_id()])]
-        }
-    );
-
-    Ok(())
-}
+//         let message_id = send_request!(api: &api, program_id: *program_id, service_name: "Poker", action: "Turn", payload: (Action::Check, session_for_account.clone()));
+//         assert!(listener.message_processed(message_id).await?.succeed());
+//     }
+//     Ok(())
+// }
 
 // #[tokio::test]
 // #[ignore]
-// async fn test_time_limit_only_one_player_stayed() -> Result<()> {
+// async fn test_time_limit() -> Result<()> {
 //     let api = GearApi::dev().await?;
 
 //     let mut listener = api.subscribe().await?;
@@ -446,513 +411,547 @@ async fn test_time_limit() -> Result<()> {
 //         .clone()
 //         .with(USERS_STR[1])
 //         .expect("Unable to change signer.");
-//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
 //     assert!(listener.message_processed(message_id).await?.succeed());
 //     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
 //     println!("stage: {:?}", stage);
 //     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
 //     println!("status: {:?}", status);
-//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-//     println!("participants: {:?}", participants);
+//     assert_eq!(
+//         status,
+//         Status::Finished {
+//             pots: vec![(15, vec![api.get_actor_id()])]
+//         }
+//     );
+
 //     Ok(())
 // }
 
-#[tokio::test]
-#[ignore]
-async fn test_registration() -> Result<()> {
-    use poker_client::ZkPublicKey;
-
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
-
-    let mut pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &str)> = vec![];
-    let api = get_new_client(&api, USERS_STR[0]).await;
-    let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
-
-    // Init
-    let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
-
-    // Resgiter
-    println!("REGISTER");
-    let player_name = "Alice".to_string();
-    let api = get_new_client(&api, USERS_STR[1]).await;
-    let id = api.get_actor_id();
-    pk_to_actor_id.push((pks[1].1.clone(), id, USERS_STR[1]));
-    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    assert_eq!(participants.len(), 2);
-
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CancelRegistration", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    assert_eq!(participants.len(), 1);
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_delete_player() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
-
-    let api = get_new_client(&api, USERS_STR[0]).await;
-
-    // Init
-    let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
-
-    // Resgiter
-    println!("REGISTER");
-    let player_name = "Alice".to_string();
-    let api = get_new_client(&api, USERS_STR[1]).await;
-    let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    assert_eq!(participants.len(), 2);
-
-    let player_to_delete = api.get_actor_id();
-    let api = get_new_client(&api, USERS_STR[0]).await;
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "DeletePlayer", payload: (player_to_delete));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    assert_eq!(participants.len(), 1);
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_all_in_case_1() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
-
-    let api_0 = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
-    let api_1 = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
-    let api_2 = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
-
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 0);
-    assert_eq!(participants[1].1.balance, 0);
-    assert_eq!(participants[2].1.balance, 0);
-
-    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
-        "tests/test_data/table_decryptions_after_preflop.json",
-    );
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
-
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[..5].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
-
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-
-    println!(" revealed table_cards: {:?}", table_cards);
-
-    println!("Players reveal their cards..");
-
-    reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    assert_eq!(
-        status,
-        Status::Finished {
-            pots: vec![(3000, vec![api_1.get_actor_id()])]
-        }
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_all_in_case_2() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
-
-    let api_0 = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
-    let api_1 = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
-    let api_2 = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(
-        status,
-        Status::Play {
-            stage: Stage::WaitingTableCardsAfterPreFlop
-        }
-    );
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
-
-    assert_eq!(stage.last_active_time, None);
-    assert_eq!(stage.acted_players, vec![]);
-    assert_eq!(stage.current_bet, 0);
-
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 990);
-    assert_eq!(participants[1].1.balance, 990);
-    assert_eq!(participants[2].1.balance, 990);
-
-    // decrypt table cards (first 3 cards)
-    println!("decrypt 3 cards after preflop");
-    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
-        "tests/test_data/table_decryptions_after_preflop.json",
-    );
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
-
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[..3].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
-
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-    println!("table_cards after preflop: {:?}", table_cards);
-
-    // Flop
-    // check: Raise -> Raise -> Call -> Call
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
-
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 0);
-    assert_eq!(participants[1].1.balance, 0);
-    assert_eq!(participants[2].1.balance, 0);
-
-    let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
-        "tests/test_data/table_decryptions_after_preflop.json",
-    );
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = table_cards_proofs
-            .iter()
-            .find(|(stored_pk, _)| stored_pk == pk);
-
-        if let Some((_, (_, proofs))) = entry {
-            let proofs: Vec<_> = proofs[3..5].to_vec();
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No decryptions found for public key: {:?}", pk);
-        }
-    }
-
-    // get revealed cards
-    let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
-
-    println!(" revealed table_cards: {:?}", table_cards);
-
-    println!("Players reveal their cards..");
-
-    reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    assert_eq!(
-        status,
-        Status::Finished {
-            pots: vec![(3000, vec![api_1.get_actor_id()])]
-        }
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_restart_and_all_in_case() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
-
-    let api_0 = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
-    let api_1 = api
-        .clone()
-        .with(USERS_STR[1])
-        .expect("Unable to change signer.");
-    let api_2 = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
-
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 995);
-    assert_eq!(participants[1].1.balance, 1005);
-    assert_eq!(participants[2].1.balance, 1000);
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "RestartGame", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
-    let deck = ZkLoaderData::load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
-    let decrypt_proofs =
-        ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
-
-    // Shuffle deck
-    println!("SHUFFLE");
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "ShuffleDeck", payload: (deck, proofs));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    // Start game
-    println!("START");
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    println!("DECRYPT");
-    let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-
-    let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
-    println!("bank: {:?}", bank);
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
-    println!("stage: {:?}", stage);
-
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 0);
-    assert_eq!(participants[1].1.balance, 5);
-    assert_eq!(participants[2].1.balance, 0);
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_cancel_game() -> Result<()> {
-    let api = GearApi::dev().await?;
-
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
-
-    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
-
-    let api_0 = api
-        .clone()
-        .with(USERS_STR[0])
-        .expect("Unable to change signer.");
-
-    let api_2 = api
-        .clone()
-        .with(USERS_STR[2])
-        .expect("Unable to change signer.");
-
-    let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    println!("stage: {:?}", stage);
-
-    let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "CancelGame", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
-
-    let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    println!("status: {:?}", status);
-    assert_eq!(status, Status::WaitingShuffleVerification);
-    let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
-    println!("participants: {:?}", participants);
-    assert_eq!(participants[0].1.balance, 1000);
-    assert_eq!(participants[1].1.balance, 1000);
-    assert_eq!(participants[2].1.balance, 1000);
-
-    Ok(())
-}
-
-async fn reveal_player_cards(
-    program_id: ProgramId,
-    api: &GearApi,
-    listener: &mut EventListener,
-    pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &'static str)>,
-) -> Result<()> {
-    let player_cards =
-        ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
-
-    let (_, card_map) = init_deck_and_card_map();
-
-    let hands = build_player_card_disclosure(player_cards, &card_map);
-
-    for (pk, _, name) in pk_to_actor_id.iter() {
-        let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
-
-        if let Some((_pk, instances)) = entry {
-            let api = api.clone().with(name).expect("Unable to change signer.");
-            let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
-            assert!(listener.message_processed(message_id).await?.succeed());
-        } else {
-            panic!("No cards found for public key: {:?}", pk);
-        }
-    }
-    Ok(())
-}
+// // #[tokio::test]
+// // #[ignore]
+// // async fn test_time_limit_only_one_player_stayed() -> Result<()> {
+// //     let api = GearApi::dev().await?;
+
+// //     let mut listener = api.subscribe().await?;
+// //     assert!(listener.blocks_running().await?);
+
+// //     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+// //     let time_skip = time::Duration::from_secs(60);
+// //     sleep(time_skip);
+// //     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+// //     println!("stage: {:?}", stage);
+
+// //     let api = api
+// //         .clone()
+// //         .with(USERS_STR[1])
+// //         .expect("Unable to change signer.");
+// //     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+// //     assert!(listener.message_processed(message_id).await?.succeed());
+// //     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+// //     println!("stage: {:?}", stage);
+// //     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+// //     println!("status: {:?}", status);
+// //     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+// //     println!("participants: {:?}", participants);
+// //     Ok(())
+// // }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_registration() -> Result<()> {
+//     use poker_client::ZkPublicKey;
+
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
+
+//     let mut pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &str)> = vec![];
+//     let api = get_new_client(&api, USERS_STR[0]).await;
+//     let id = api.get_actor_id();
+//     pk_to_actor_id.push((pks[0].1.clone(), id, USERS_STR[0]));
+
+//     // Init
+//     let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
+
+//     // Resgiter
+//     println!("REGISTER");
+//     let player_name = "Alice".to_string();
+//     let api = get_new_client(&api, USERS_STR[1]).await;
+//     let id = api.get_actor_id();
+//     pk_to_actor_id.push((pks[1].1.clone(), id, USERS_STR[1]));
+//     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     assert_eq!(participants.len(), 2);
+
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CancelRegistration", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     assert_eq!(participants.len(), 1);
+
+//     Ok(())
+// }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_delete_player() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
+
+//     let api = get_new_client(&api, USERS_STR[0]).await;
+
+//     // Init
+//     let (pts_id, program_id) = init(&api, pks[0].1.clone(), &mut listener).await?;
+
+//     // Resgiter
+//     println!("REGISTER");
+//     let player_name = "Alice".to_string();
+//     let api = get_new_client(&api, USERS_STR[1]).await;
+//     let message_id = send_request!(api: &api, program_id: pts_id, service_name: "Pts", action: "GetAccural", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Register", payload: (player_name, pks[1].1.clone()));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     assert_eq!(participants.len(), 2);
+
+//     let player_to_delete = api.get_actor_id();
+//     let api = get_new_client(&api, USERS_STR[0]).await;
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "DeletePlayer", payload: (player_to_delete));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     assert_eq!(participants.len(), 1);
+
+//     Ok(())
+// }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_all_in_case_1() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+
+//     let api_0 = api
+//         .clone()
+//         .with(USERS_STR[0])
+//         .expect("Unable to change signer.");
+//     let api_1 = api
+//         .clone()
+//         .with(USERS_STR[1])
+//         .expect("Unable to change signer.");
+//     let api_2 = api
+//         .clone()
+//         .with(USERS_STR[2])
+//         .expect("Unable to change signer.");
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
+
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 0);
+//     assert_eq!(participants[1].1.balance, 0);
+//     assert_eq!(participants[2].1.balance, 0);
+
+//     let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+//         "tests/test_data/table_decryptions_after_preflop.json",
+//     );
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
+
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[..5].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
+
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+
+//     println!(" revealed table_cards: {:?}", table_cards);
+
+//     println!("Players reveal their cards..");
+
+//     reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     assert_eq!(
+//         status,
+//         Status::Finished {
+//             pots: vec![(3000, vec![api_1.get_actor_id()])]
+//         }
+//     );
+
+//     Ok(())
+// }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_all_in_case_2() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let (program_id, pk_to_actor_id) = make_zk_actions(&api, &mut listener).await?;
+
+//     let api_0 = api
+//         .clone()
+//         .with(USERS_STR[0])
+//         .expect("Unable to change signer.");
+//     let api_1 = api
+//         .clone()
+//         .with(USERS_STR[1])
+//         .expect("Unable to change signer.");
+//     let api_2 = api
+//         .clone()
+//         .with(USERS_STR[2])
+//         .expect("Unable to change signer.");
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Check));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(
+//         status,
+//         Status::Play {
+//             stage: Stage::WaitingTableCardsAfterPreFlop
+//         }
+//     );
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
+
+//     assert_eq!(stage.last_active_time, None);
+//     assert_eq!(stage.acted_players, vec![]);
+//     assert_eq!(stage.current_bet, 0);
+
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 990);
+//     assert_eq!(participants[1].1.balance, 990);
+//     assert_eq!(participants[2].1.balance, 990);
+
+//     // decrypt table cards (first 3 cards)
+//     println!("decrypt 3 cards after preflop");
+//     let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+//         "tests/test_data/table_decryptions_after_preflop.json",
+//     );
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
+
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[..3].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
+
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+//     println!("table_cards after preflop: {:?}", table_cards);
+
+//     // Flop
+//     // check: Raise -> Raise -> Call -> Call
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 50 }));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Raise { bet: 100 }));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
+
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 0);
+//     assert_eq!(participants[1].1.balance, 0);
+//     assert_eq!(participants[2].1.balance, 0);
+
+//     let table_cards_proofs = ZkLoaderData::load_table_cards_proofs(
+//         "tests/test_data/table_decryptions_after_preflop.json",
+//     );
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = table_cards_proofs
+//             .iter()
+//             .find(|(stored_pk, _)| stored_pk == pk);
+
+//         if let Some((_, (_, proofs))) = entry {
+//             let proofs: Vec<_> = proofs[3..5].to_vec();
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitTablePartialDecryptions", payload: (proofs));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No decryptions found for public key: {:?}", pk);
+//         }
+//     }
+
+//     // get revealed cards
+//     let table_cards = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "RevealedTableCards", return_type: Vec<Card>, payload: ());
+
+//     println!(" revealed table_cards: {:?}", table_cards);
+
+//     println!("Players reveal their cards..");
+
+//     reveal_player_cards(program_id, &api, &mut listener, pk_to_actor_id).await?;
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     assert_eq!(
+//         status,
+//         Status::Finished {
+//             pots: vec![(3000, vec![api_1.get_actor_id()])]
+//         }
+//     );
+
+//     Ok(())
+// }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_restart_and_all_in_case() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+
+//     let api_0 = api
+//         .clone()
+//         .with(USERS_STR[0])
+//         .expect("Unable to change signer.");
+//     let api_1 = api
+//         .clone()
+//         .with(USERS_STR[1])
+//         .expect("Unable to change signer.");
+//     let api_2 = api
+//         .clone()
+//         .with(USERS_STR[2])
+//         .expect("Unable to change signer.");
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
+
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 995);
+//     assert_eq!(participants[1].1.balance, 1005);
+//     assert_eq!(participants[2].1.balance, 1000);
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "RestartGame", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let proofs = ZkLoaderData::load_shuffle_proofs("tests/test_data/shuffle_proofs.json");
+//     let deck = ZkLoaderData::load_encrypted_table_cards("tests/test_data/encrypted_deck.json");
+//     let decrypt_proofs =
+//         ZkLoaderData::load_partial_decrypt_proofs("tests/test_data/partial_decrypt_proofs.json");
+
+//     // Shuffle deck
+//     println!("SHUFFLE");
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "ShuffleDeck", payload: (deck, proofs));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     // Start game
+//     println!("START");
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "StartGame", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     println!("DECRYPT");
+//     let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "SubmitAllPartialDecryptions", payload: (decrypt_proofs));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::AllIn));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_1, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+
+//     let bank = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "BettingBank", return_type: Vec<(ActorId, u128)>, payload: ());
+//     println!("bank: {:?}", bank);
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ()).unwrap();
+//     println!("stage: {:?}", stage);
+
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 0);
+//     assert_eq!(participants[1].1.balance, 5);
+//     assert_eq!(participants[2].1.balance, 0);
+
+//     Ok(())
+// }
+
+// #[tokio::test]
+// #[ignore]
+// async fn test_cancel_game() -> Result<()> {
+//     let api = GearApi::dev().await?;
+
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
+
+//     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+
+//     let api_0 = api
+//         .clone()
+//         .with(USERS_STR[0])
+//         .expect("Unable to change signer.");
+
+//     let api_2 = api
+//         .clone()
+//         .with(USERS_STR[2])
+//         .expect("Unable to change signer.");
+
+//     let message_id = send_request!(api: &api_2, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Fold));
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     println!("stage: {:?}", stage);
+
+//     let message_id = send_request!(api: &api_0, program_id: program_id, service_name: "Poker", action: "CancelGame", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
+
+//     let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     println!("status: {:?}", status);
+//     assert_eq!(status, Status::WaitingShuffleVerification);
+//     let participants = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Participants", return_type:  Vec<(ActorId, Participant)>, payload: ());
+//     println!("participants: {:?}", participants);
+//     assert_eq!(participants[0].1.balance, 1000);
+//     assert_eq!(participants[1].1.balance, 1000);
+//     assert_eq!(participants[2].1.balance, 1000);
+
+//     Ok(())
+// }
+
+// async fn reveal_player_cards(
+//     program_id: ProgramId,
+//     api: &GearApi,
+//     listener: &mut EventListener,
+//     pk_to_actor_id: Vec<(ZkPublicKey, ActorId, &'static str)>,
+// ) -> Result<()> {
+//     let player_cards =
+//         ZkLoaderData::load_cards_with_proofs("tests/test_data/player_decryptions.json");
+
+//     let (_, card_map) = init_deck_and_card_map();
+
+//     let hands = build_player_card_disclosure(player_cards, &card_map);
+
+//     for (pk, _, name) in pk_to_actor_id.iter() {
+//         let entry = hands.iter().find(|(stored_pk, _)| stored_pk == pk);
+
+//         if let Some((_pk, instances)) = entry {
+//             let api = api.clone().with(name).expect("Unable to change signer.");
+//             let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "CardDisclosure", payload: (instances));
+//             assert!(listener.message_processed(message_id).await?.succeed());
+//         } else {
+//             panic!("No cards found for public key: {:?}", pk);
+//         }
+//     }
+//     Ok(())
+// }

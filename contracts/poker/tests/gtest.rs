@@ -1,9 +1,16 @@
+use ark_ec::CurveGroup;
+use ark_ec::PrimeGroup;
+use ark_ed_on_bls12_381_bandersnatch::{EdwardsProjective as G, Fq, Fr};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
+use blake2::{Blake2b512, Digest};
 use gtest::Program;
 use gtest::WasmProgram;
 use hex_literal::hex;
-
 use poker_client::ZkPublicKey;
-use poker_client::{traits::*, GameConfig, SessionConfig, Stage, Status};
+use poker_client::{
+    traits::*, ChaumPedersenProofBytes, GameConfig, PartialDec, SessionConfig, Stage, Status,
+    VerificationVariables,
+};
 use pts_client::traits::{Pts, PtsFactory};
 use sails_rs::ActorId;
 use sails_rs::{
@@ -13,7 +20,7 @@ use sails_rs::{
 use std::ops::Range;
 use std::path::Path;
 mod utils_gclient;
-use utils_gclient::zk_loader::ZkLoaderData;
+use utils_gclient::zk_loader::{ZkLoaderData, ZkSecretKey};
 use utils_gclient::{build_player_card_disclosure, init_deck_and_card_map};
 use zk_verification_client::traits::*;
 const USERS: [u64; 6] = [42, 43, 44, 45, 46, 47];
@@ -36,6 +43,18 @@ use gbuiltin_bls381::{
 use gstd::prelude::*;
 type ArkScale<T> = ark_scale::ArkScale<T, { ark_scale::HOST_CALL }>;
 type Gt = <Bls12_381 as Pairing>::TargetField;
+
+#[test]
+fn hash_prefix_agrees() {
+    let g = G::generator();
+    println!("g = {:?}", g);
+    let p2 = (g + g);
+    println!("p2 = {:?}", p2);
+    let p3 = (p2 + g);
+    println!("p3 = {:?}", p3);
+    let result = hash_to_fr(&[g, p2, p3]);
+    println!("result = {:?}", result);
+}
 
 #[tokio::test]
 async fn test_basic_poker_workflow() {
@@ -588,6 +607,7 @@ struct TestEnvironment {
 }
 struct TestData {
     pks: Vec<(usize, poker_client::ZkPublicKey)>,
+    sks: Vec<(usize, ZkSecretKey)>,
     shuffle_proofs: Vec<poker_client::VerificationVariables>,
     encrypted_deck: Vec<poker_client::EncryptedCard>,
     decrypt_proofs: Vec<poker_client::VerificationVariables>,
@@ -622,6 +642,7 @@ impl TestData {
             TestDataProfile::SixPlayersNew => "tests/test_data_gtest/6_players_new_shuffle",
         };
 
+        println!("prefix {:?}", prefix);
         let table_path = format!("{}/table_decryptions.json", prefix);
         let player_path = format!("{}/player_decryptions.json", prefix);
 
@@ -639,6 +660,7 @@ impl TestData {
 
         Self {
             pks: ZkLoaderData::load_player_public_keys(&format!("{}/player_pks.json", prefix)),
+            sks: ZkLoaderData::load_player_secret_keys(&format!("{}/player_sks.json", prefix)),
             shuffle_proofs: ZkLoaderData::load_shuffle_proofs(&format!(
                 "{}/shuffle_proofs.json",
                 prefix
@@ -727,14 +749,12 @@ impl TestEnvironment {
     ) -> ActorId {
         let shuffle_vkey_bytes =
             ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
-        let decrypt_vkey_bytes =
-            ZkLoaderData::load_verifying_key("tests/test_data/decrypt_vkey.json");
 
         let zk_code_id = remoting.system().submit_code(zk_verification::WASM_BINARY);
         let zk_factory = zk_verification_client::ZkVerificationFactory::new(remoting.clone());
 
         let zk_program_id = zk_factory
-            .new(shuffle_vkey_bytes, decrypt_vkey_bytes)
+            .new(shuffle_vkey_bytes)
             .send_recv(zk_code_id, b"salt")
             .await
             .unwrap();
@@ -813,11 +833,39 @@ impl TestEnvironment {
             .await;
 
         println!("DECRYPT");
-        self.service_client
-            .submit_all_partial_decryptions(test_data.decrypt_proofs.clone())
-            .send_recv(self.program_id)
-            .await
-            .unwrap();
+
+        let partial_decs = get_decs_from_proofs(&test_data.decrypt_proofs.clone());
+
+        let g = G::generator();
+        for (i, user) in USERS.iter().enumerate() {
+            let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
+            let sk = test_data.sks[i].1.scalar;
+            let mut items = Vec::new();
+            for k in 0..10 {
+                let c0 = deserialize_bandersnatch_coords(&partial_decs[10 * i + k].0.clone());
+                println!("c0 {:?}", partial_decs[10 * i + k].0.clone());
+                let delta_c0 = deserialize_bandersnatch_coords(&partial_decs[10 * i + k].1.clone());
+                println!("delta_c0 {:?}", partial_decs[10 * i + k].1.clone());
+                let delta_c0_neg = -delta_c0;
+
+                let proof = prove(g, pk, c0, delta_c0_neg, sk);
+
+                let item = PartialDec {
+                    c0: partial_decs[10 * i + k].0.clone(),
+                    delta_c0: partial_decs[10 * i + k].1.clone(),
+                    proof: proof.to_bytes(),
+                };
+                items.push(item.clone());
+            }
+
+            self.service_client
+                .submit_partial_decryptions(items, None)
+                .with_args(|args| args.with_actor_id((*user).into()))
+                .send_recv(self.program_id)
+                .await
+                .unwrap();
+        }
+
         self.check_status(Status::Play {
             stage: Stage::PreFlop,
         })
@@ -872,10 +920,29 @@ impl TestEnvironment {
             .table_cards_proofs
             .as_ref()
             .expect("No table_cards_proofs for this data profile");
+        let g = G::generator();
         for (i, user) in USERS.iter().enumerate() {
-            let proofs: Vec<_> = table_cards_proofs[i].1 .1[range.clone()].to_vec();
+            let partial_decs =
+                get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()].to_vec());
+            let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
+            let sk = test_data.sks[i].1.scalar;
+            let mut items = Vec::new();
+            for dec in partial_decs {
+                let c0 = deserialize_bandersnatch_coords(&dec.0.clone());
+                let delta_c0 = deserialize_bandersnatch_coords(&dec.1.clone());
+                let delta_c0_neg = -delta_c0;
+
+                let proof = prove(g, pk, c0, delta_c0_neg, sk);
+
+                let item = PartialDec {
+                    c0: dec.0.clone(),
+                    delta_c0: dec.1.clone(),
+                    proof: proof.to_bytes(),
+                };
+                items.push(item.clone());
+            }
             self.service_client
-                .submit_table_partial_decryptions(proofs, None)
+                .submit_table_partial_decryptions(items, None)
                 .with_args(|args| args.with_actor_id((*user).into()))
                 .send_recv(self.program_id)
                 .await
@@ -891,11 +958,29 @@ impl TestEnvironment {
             .expect("No player_cards for this data profile");
         let (_, card_map) = init_deck_and_card_map();
         let hands = build_player_card_disclosure(player_cards.clone(), &card_map);
-
+        let g = G::generator();
         for i in 0..USERS.len() {
             let proofs = hands[i].1.clone();
+            let partial_decs = get_decs_from_proofs(&proofs);
+            let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
+            let sk = test_data.sks[i].1.scalar;
+            let mut items = Vec::new();
+            for dec in partial_decs {
+                let c0 = deserialize_bandersnatch_coords(&dec.0.clone());
+                let delta_c0 = deserialize_bandersnatch_coords(&dec.1.clone());
+                let delta_c0_neg = -delta_c0;
+
+                let proof = prove(g, pk, c0, delta_c0_neg, sk);
+
+                let item = PartialDec {
+                    c0: dec.0.clone(),
+                    delta_c0: dec.1.clone(),
+                    proof: proof.to_bytes(),
+                };
+                items.push(item.clone());
+            }
             self.service_client
-                .card_disclosure(proofs, None)
+                .card_disclosure(items, None)
                 .with_args(|args| args.with_actor_id(USERS[i].into()))
                 .send_recv(self.program_id)
                 .await
@@ -1021,4 +1106,113 @@ impl WasmProgram for BlsBuiltinMock {
     }
 
     fn debug(&mut self, _data: &str) {}
+}
+
+pub fn get_decs_from_proofs(proofs: &[VerificationVariables]) -> Vec<([Vec<u8>; 3], [Vec<u8>; 3])> {
+    let mut results = Vec::new();
+    for proof in proofs {
+        let c0 = [
+            proof.public_input[1].clone(),
+            proof.public_input[2].clone(),
+            proof.public_input[3].clone(),
+        ];
+        let dec = [
+            proof.public_input[4].clone(),
+            proof.public_input[5].clone(),
+            proof.public_input[6].clone(),
+        ];
+        results.push((c0, dec));
+    }
+    results
+}
+
+pub struct ChaumPedersenProof {
+    pub a: G,
+    pub b: G,
+    pub z: Fr,
+}
+
+impl ChaumPedersenProof {
+    pub fn to_bytes(&self) -> ChaumPedersenProofBytes {
+        fn fq_to_bytes(x: &Fq) -> Vec<u8> {
+            x.into_bigint().to_bytes_le()
+        }
+
+        let a_aff = self.a;
+        let b_aff = self.b;
+
+        ChaumPedersenProofBytes {
+            a: [
+                fq_to_bytes(&a_aff.x),
+                fq_to_bytes(&a_aff.y),
+                fq_to_bytes(&a_aff.z),
+            ],
+            b: [
+                fq_to_bytes(&b_aff.x),
+                fq_to_bytes(&b_aff.y),
+                fq_to_bytes(&b_aff.z),
+            ],
+            z: self.z.into_bigint().to_bytes_le(),
+        }
+    }
+}
+
+fn hash_to_fr(points: &[G]) -> Fr {
+    let mut hasher = Blake2b512::new();
+
+    for p in points {
+        let affine = p.into_affine();
+        let x_bytes = affine.x.into_bigint().to_bytes_le();
+        let y_bytes = affine.y.into_bigint().to_bytes_le();
+
+        hasher.update(x_bytes);
+        hasher.update(y_bytes);
+    }
+
+    let hash_bytes = hasher.finalize();
+    Fr::from_le_bytes_mod_order(&hash_bytes[..32])
+}
+
+// prove: D = c1^sk and pk = g^sk
+pub fn prove(g: G, pk: G, c1: G, D: G, sk: Fr) -> ChaumPedersenProof {
+    let r = Fr::rand(&mut rand::thread_rng());
+
+    let A = g * r;
+    let B = c1 * r;
+
+    let c = hash_to_fr(&[g, pk, c1, D, A, B]);
+
+    let z = r + c * sk;
+
+    ChaumPedersenProof { a: A, b: B, z }
+}
+
+pub fn verify(g: G, pk: G, c1: G, D: G, proof: &ChaumPedersenProof) -> bool {
+    let c = hash_to_fr(&[g, pk, c1, D, proof.a, proof.b]);
+
+    let lhs1 = g * proof.z;
+    let rhs1 = proof.a + pk * c;
+
+    let lhs2 = c1 * proof.z;
+    let rhs2 = proof.b + D * c;
+
+    lhs1 == rhs1 && lhs2 == rhs2
+}
+
+pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> G {
+    let x = Fq::from_le_bytes_mod_order(&coords[0]);
+    let y = Fq::from_le_bytes_mod_order(&coords[1]);
+    let z = Fq::from_le_bytes_mod_order(&coords[2]);
+    let t = x * y;
+
+    G::new_unchecked(x, y, t, z).into_affine().into()
+}
+
+fn deserialize_public_key(pk: &ZkPublicKey) -> G {
+    let x = Fq::from_le_bytes_mod_order(&pk.x);
+    let y = Fq::from_le_bytes_mod_order(&pk.y);
+    let z = Fq::from_le_bytes_mod_order(&pk.z);
+    let t = x * y;
+
+    G::new(x, y, t, z)
 }

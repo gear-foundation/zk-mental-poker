@@ -1,25 +1,7 @@
 use core::fmt::Debug;
 use sails_rs::collections::HashMap;
-use sails_rs::collections::HashSet;
 use sails_rs::prelude::*;
 use sails_rs::{ActorId, Vec};
-
-type PartialDecryption = [Vec<u8>; 3];
-#[derive(Default, Debug)]
-pub struct PartialDecryptionsByCard {
-    pub partials: Vec<PartialDecryption>,
-    pub participants: HashSet<ActorId>,
-}
-
-impl PartialDecryptionsByCard {
-    pub fn add(&mut self, actor: ActorId, decryption: PartialDecryption) {
-        if self.participants.contains(&actor) {
-            panic!("Already send decryption for this card");
-        }
-        self.partials.push(decryption);
-        self.participants.insert(actor);
-    }
-}
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]

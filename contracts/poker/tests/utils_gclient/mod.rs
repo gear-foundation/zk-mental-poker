@@ -2,7 +2,6 @@
 use crate::send_request;
 use gclient::{EventListener, EventProcessor, GearApi, Result};
 use gear_core::ids::ProgramId;
-use num_bigint::Sign;
 use poker_client::{Card, GameConfig, SessionConfig, Suit, ZkPublicKey};
 use sails_rs::{ActorId, Encode};
 pub mod zk_loader;
@@ -280,17 +279,13 @@ pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective
 pub fn build_player_card_disclosure(
     data: Vec<(ZkPublicKey, Vec<DecryptedCardWithProof>)>,
     card_map: &HashMap<EdwardsProjective, Card>,
-) -> Vec<(ZkPublicKey, Vec<(Card, VerificationVariables)>)> {
+) -> Vec<(ZkPublicKey, Vec<VerificationVariables>)> {
     let mut result = Vec::new();
 
     for (pk, decs) in data {
         let mut verified = Vec::new();
         for entry in decs {
-            let point = deserialize_bandersnatch_coords(&entry.decrypted);
-            let card =
-                find_card_by_point(card_map, &point).expect("Card not found for decrypted point");
-
-            verified.push((card, entry.proof));
+            verified.push(entry.proof);
         }
         result.push((pk, verified));
     }

@@ -1,7 +1,7 @@
-use crate::services::game::{Card, EncryptedCard, Suit, VerificationVariables, ZkPublicKey};
+use crate::services::game::{Card, Suit, ZkPublicKey};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, Fq, Fr};
-use ark_ff::{BigInteger, One, PrimeField, Zero};
+use ark_ff::{BigInteger, PrimeField};
 use sails_rs::{collections::HashMap, prelude::*};
 
 pub fn deserialize_bandersnatch_coords(coords: &[Vec<u8>; 3]) -> EdwardsProjective {
@@ -23,13 +23,15 @@ pub fn serialize_bandersnatch_coords(point: &EdwardsProjective) -> [Vec<u8>; 3] 
     ]
 }
 
-fn deserialize_public_key(pk: &ZkPublicKey) -> EdwardsProjective {
+pub fn deserialize_public_key(pk: &ZkPublicKey) -> EdwardsProjective {
     let x = Fq::from_le_bytes_mod_order(&pk.x);
     let y = Fq::from_le_bytes_mod_order(&pk.y);
     let z = Fq::from_le_bytes_mod_order(&pk.z);
     let t = x * y;
 
-    EdwardsProjective::new(x, y, t, z)
+    EdwardsProjective::new_unchecked(x, y, t, z)
+        .into_affine()
+        .into()
 }
 
 fn serialize_public_key(point: &EdwardsProjective) -> ZkPublicKey {
@@ -159,57 +161,6 @@ pub fn find_card_by_point(
             None
         }
     })
-}
-
-pub fn decrypt_point(
-    card_map: &HashMap<EdwardsProjective, Card>,
-    encrypted_point: &EncryptedCard,
-    partial_decryptions: Vec<[Vec<u8>; 3]>,
-) -> Option<Card> {
-    let mut sum = deserialize_bandersnatch_coords(&partial_decryptions[0]);
-    for partial in partial_decryptions.iter().skip(1) {
-        sum += deserialize_bandersnatch_coords(partial);
-    }
-    let c1_point = deserialize_bandersnatch_coords(&encrypted_point.c1);
-    let decrypted_point = c1_point + sum;
-    find_card_by_point(card_map, &decrypted_point)
-}
-
-pub fn verify_cards(
-    partially_decrypted: &[EncryptedCard; 2],
-    instances: Vec<(Card, VerificationVariables)>,
-    card_map: &HashMap<EdwardsProjective, Card>,
-) {
-    if instances.len() != 2 {
-        panic!("Expected 2 cards with proofs");
-    }
-
-    let c01 = partially_decrypted[0].clone().c0;
-    let c02 = partially_decrypted[1].clone().c0;
-
-    for (declared_card, instance) in instances.into_iter() {
-        let (c0, c1_part_coords) = parse_partial_decryption_inputs(&instance.public_input);
-
-        let encrypted = if compare_points(&c0, &c01) {
-            &partially_decrypted[0]
-        } else if compare_points(&c0, &c02) {
-            &partially_decrypted[1]
-        } else {
-            panic!("Card not found")
-        };
-
-        let c1_point = deserialize_bandersnatch_coords(&encrypted.c1);
-        let c1_part = deserialize_bandersnatch_coords(&c1_part_coords);
-
-        let decrypted_point = c1_point + c1_part;
-
-        let Some(expected_card) = find_card_by_point(card_map, &decrypted_point) else {
-            panic!("Decrypted point not found in card map");
-        };
-        if declared_card != expected_card {
-            panic!("Declared card does not match actual decrypted card");
-        }
-    }
 }
 
 // #[cfg(test)]
@@ -385,114 +336,3 @@ pub fn verify_cards(
 //         assert_eq!(card_map, json_map, "Rust-generated map must match JSON");
 //     }
 // }
-
-pub fn get_decrypted_points(
-    proofs: &[VerificationVariables],
-    encrypted_cards: &HashMap<ActorId, [EncryptedCard; 2]>,
-) -> Vec<(ActorId, [EncryptedCard; 2])> {
-    let grouped = group_partial_decryptions_by_c0(proofs);
-
-    let mut results = HashMap::new();
-
-    for (c0_coords, partials) in grouped {
-        let c1_coords = encrypted_cards
-            .iter()
-            .flat_map(|(_, cards)| cards)
-            .find(|c| compare_points(&c.c0, &c0_coords))
-            .map(|c| &c.c1);
-        let Some(c1_coords) = c1_coords else {
-            panic!("Missing c1")
-        };
-        let decryption_sum = sum_partial_decryptions(&partials);
-        let decrypted = deserialize_bandersnatch_coords(c1_coords) + decryption_sum;
-
-        results.insert(c0_coords, decrypted);
-    }
-
-    let mut cards_by_player = Vec::new();
-
-    let empty_card = EncryptedCard {
-        c0: [vec![], vec![], vec![]],
-        c1: [vec![], vec![], vec![]],
-    };
-
-    for (actor_id, cards) in encrypted_cards {
-        let mut decrypted_cards = [empty_card.clone(), empty_card.clone()];
-
-        for (i, card) in cards.iter().enumerate() {
-            let decrypted_point = results.get(&card.c0);
-            let Some(decrypted_point) = decrypted_point else {
-                panic!("Missing decryption");
-            };
-
-            decrypted_cards[i] = EncryptedCard {
-                c0: card.c0.clone(),
-                c1: serialize_bandersnatch_coords(decrypted_point),
-            };
-        }
-
-        cards_by_player.push((*actor_id, decrypted_cards));
-    }
-
-    cards_by_player
-}
-
-fn group_partial_decryptions_by_c0(
-    proofs: &[VerificationVariables],
-) -> HashMap<[Vec<u8>; 3], Vec<[Vec<u8>; 3]>> {
-    let mut map = HashMap::new();
-
-    for proof in proofs {
-        let (c0, expected) = parse_partial_decryption_inputs(&proof.public_input);
-        map.entry(c0).or_insert_with(Vec::new).push(expected);
-    }
-
-    map
-}
-
-pub fn get_cards_and_decryptions(
-    table_cards: &[EncryptedCard],
-    proofs: &[VerificationVariables],
-) -> Vec<(EncryptedCard, [Vec<u8>; 3])> {
-    let mut decryptions = Vec::new();
-    for proof in proofs {
-        let (c0, dec) = parse_partial_decryption_inputs(&proof.public_input);
-        let c1 = table_cards
-            .iter()
-            .find(|c| compare_points(&c.c0, &c0))
-            .map(|c| &c.c1);
-        let Some(c1) = c1 else {
-            panic!("Card not found")
-        };
-        let card = EncryptedCard { c0, c1: c1.clone() };
-        decryptions.push((card, dec));
-    }
-    decryptions
-}
-fn parse_partial_decryption_inputs(public_input: &[Vec<u8>]) -> ([Vec<u8>; 3], [Vec<u8>; 3]) {
-    let is_valid = Fq::from_le_bytes_mod_order(&public_input[0]);
-
-    if is_valid != Fq::one() {
-        panic!("Invalid proof");
-    }
-    let c0 = [
-        public_input[1].clone(),
-        public_input[2].clone(),
-        public_input[3].clone(),
-    ];
-    let expected = [
-        public_input[4].clone(),
-        public_input[5].clone(),
-        public_input[6].clone(),
-    ];
-    (c0, expected)
-}
-
-fn sum_partial_decryptions(partials: &[[Vec<u8>; 3]]) -> EdwardsProjective {
-    partials
-        .iter()
-        .fold(EdwardsProjective::zero(), |acc, coord| {
-            let p = deserialize_bandersnatch_coords(coord);
-            acc + p
-        })
-}
