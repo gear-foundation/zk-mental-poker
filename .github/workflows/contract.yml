@@ -48,7 +48,7 @@ jobs:
 
     - name: Run tests
       env:
-        RUSTFLAGS: "-Cforce-frame-pointers=yes"
+        RUSTFLAGS: "-Cforce-frame-pointers=yes -Clink-arg=-Wl,--no-as-needed -Clink-arg=-lc"
       run: cargo test -r
 
     - name: Build project
