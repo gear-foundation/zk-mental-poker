@@ -29,6 +29,7 @@ use utils_gclient::*;
 // }
 
 #[tokio::test]
+#[ignore]
 async fn upload_contracts_to_testnet() -> Result<()> {
     // let api = GearApi::dev().await?;
     let api = GearApi::vara_testnet().await?;
