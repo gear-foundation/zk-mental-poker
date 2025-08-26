@@ -47,6 +47,8 @@ jobs:
       run: cargo clippy -r --all -- -D warnings
 
     - name: Run tests
+      env:
+        RUSTFLAGS: "-Cforce-frame-pointers=yes"
       run: cargo test -r
 
     - name: Build project
