@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use ark_ec::CurveGroup;
 use ark_ec::PrimeGroup;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsProjective as G, Fq, Fr};
@@ -47,13 +48,13 @@ type Gt = <Bls12_381 as Pairing>::TargetField;
 #[test]
 fn hash_prefix_agrees() {
     let g = G::generator();
-    println!("g = {:?}", g);
-    let p2 = (g + g);
-    println!("p2 = {:?}", p2);
-    let p3 = (p2 + g);
-    println!("p3 = {:?}", p3);
+    println!("g = {g:?}");
+    let p2 = g + g;
+    println!("p2 = {p2:?}");
+    let p3 = p2 + g;
+    println!("p3 = {p3:?}");
     let result = hash_to_fr(&[g, p2, p3]);
-    println!("result = {:?}", result);
+    println!("result = {result:?}",);
 }
 
 #[tokio::test]
@@ -129,7 +130,7 @@ async fn test_basic_poker_workflow() {
         .await
         .unwrap();
 
-    println!("participants {:?}", participants);
+    println!("participants {participants:?}");
 
     if let Status::Finished { pots } = result {
         assert_eq!(pots.len(), 1);
@@ -217,10 +218,11 @@ async fn gtest_check_null_balance() {
         .recv(env.program_id)
         .await
         .unwrap();
-    println!("result {:?}", result);
-    if !matches!(result, Status::Finished { .. }) {
-        assert!(true, "Wrong Status!");
-    }
+    println!("result {result:?}");
+    assert!(
+        matches!(result, Status::Finished { .. }),
+        "Wrong status: {result:?}"
+    );
     let participants = env
         .service_client
         .participants()
@@ -346,7 +348,7 @@ async fn gtest_one_player_left() {
             });
         }
     }
-    println!("participants {:?}", participants);
+    println!("participants {participants:?}");
 }
 
 #[tokio::test]
@@ -434,7 +436,7 @@ async fn gtest_check_cancel_registration_and_turn() {
         .recv(env.program_id)
         .await
         .unwrap();
-    println!("active_participants: {:?}", active_participants);
+    println!("active_participants: {active_participants:?}");
     assert_eq!(active_participants.first_index, 2);
 
     // Cancel registration
@@ -451,7 +453,7 @@ async fn gtest_check_cancel_registration_and_turn() {
         .recv(env.program_id)
         .await
         .unwrap();
-    println!("active_participants: {:?}", active_participants);
+    println!("active_participants: {active_participants:?}");
     assert_eq!(active_participants.first_index, 1);
 }
 
@@ -642,9 +644,9 @@ impl TestData {
             TestDataProfile::SixPlayersNew => "tests/test_data_gtest/6_players_new_shuffle",
         };
 
-        println!("prefix {:?}", prefix);
-        let table_path = format!("{}/table_decryptions.json", prefix);
-        let player_path = format!("{}/player_decryptions.json", prefix);
+        println!("prefix {prefix:?}");
+        let table_path = format!("{prefix}/table_decryptions.json");
+        let player_path = format!("{prefix}/player_decryptions.json");
 
         let table_cards_proofs = if Path::new(&table_path).exists() {
             Some(ZkLoaderData::load_table_cards_proofs(&table_path))
@@ -659,19 +661,16 @@ impl TestData {
         };
 
         Self {
-            pks: ZkLoaderData::load_player_public_keys(&format!("{}/player_pks.json", prefix)),
-            sks: ZkLoaderData::load_player_secret_keys(&format!("{}/player_sks.json", prefix)),
+            pks: ZkLoaderData::load_player_public_keys(&format!("{prefix}/player_pks.json")),
+            sks: ZkLoaderData::load_player_secret_keys(&format!("{prefix}/player_sks.json")),
             shuffle_proofs: ZkLoaderData::load_shuffle_proofs(&format!(
-                "{}/shuffle_proofs.json",
-                prefix
+                "{prefix}/shuffle_proofs.json"
             )),
             encrypted_deck: ZkLoaderData::load_encrypted_table_cards(&format!(
-                "{}/encrypted_deck.json",
-                prefix
+                "{prefix}/encrypted_deck.json"
             )),
             decrypt_proofs: ZkLoaderData::load_partial_decrypt_proofs(&format!(
-                "{}/partial_decrypt_proofs.json",
-                prefix
+                "{prefix}/partial_decrypt_proofs.json"
             )),
             table_cards_proofs,
             player_cards,
@@ -905,7 +904,7 @@ impl TestEnvironment {
 
     pub async fn run_actions(&mut self, moves: Vec<(u64, poker_client::Action)>) {
         for (user_id, action) in moves {
-            println!("action {:?}", action);
+            println!("action {action:?}");
             self.service_client
                 .turn(action, None)
                 .with_args(|args| args.with_actor_id(user_id.into()))
@@ -922,8 +921,7 @@ impl TestEnvironment {
             .expect("No table_cards_proofs for this data profile");
         let g = G::generator();
         for (i, user) in USERS.iter().enumerate() {
-            let partial_decs =
-                get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()].to_vec());
+            let partial_decs = get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()]);
             let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
             let sk = test_data.sks[i].1.scalar;
             let mut items = Vec::new();
@@ -995,7 +993,7 @@ impl TestEnvironment {
             .recv(self.program_id)
             .await
             .unwrap();
-        println!("Cards on table {:?}", table_cards);
+        println!("Cards on table {table_cards:?}");
     }
 
     async fn verify_game_finished(&mut self) -> Status {
@@ -1005,7 +1003,7 @@ impl TestEnvironment {
             .recv(self.program_id)
             .await
             .unwrap();
-        println!("Final result: {:?}", result);
+        println!("Final result: {result:?}");
         assert!(
             matches!(result, Status::Finished { .. }),
             "Game should be finished"
@@ -1174,27 +1172,27 @@ fn hash_to_fr(points: &[G]) -> Fr {
 }
 
 // prove: D = c1^sk and pk = g^sk
-pub fn prove(g: G, pk: G, c1: G, D: G, sk: Fr) -> ChaumPedersenProof {
+pub fn prove(g: G, pk: G, c1: G, d: G, sk: Fr) -> ChaumPedersenProof {
     let r = Fr::rand(&mut rand::thread_rng());
 
-    let A = g * r;
-    let B = c1 * r;
+    let a = g * r;
+    let b = c1 * r;
 
-    let c = hash_to_fr(&[g, pk, c1, D, A, B]);
+    let c = hash_to_fr(&[g, pk, c1, d, a, b]);
 
     let z = r + c * sk;
 
-    ChaumPedersenProof { a: A, b: B, z }
+    ChaumPedersenProof { a, b, z }
 }
 
-pub fn verify(g: G, pk: G, c1: G, D: G, proof: &ChaumPedersenProof) -> bool {
-    let c = hash_to_fr(&[g, pk, c1, D, proof.a, proof.b]);
+pub fn verify(g: G, pk: G, c1: G, d: G, proof: &ChaumPedersenProof) -> bool {
+    let c = hash_to_fr(&[g, pk, c1, d, proof.a, proof.b]);
 
     let lhs1 = g * proof.z;
     let rhs1 = proof.a + pk * c;
 
     let lhs2 = c1 * proof.z;
-    let rhs2 = proof.b + D * c;
+    let rhs2 = proof.b + d * c;
 
     lhs1 == rhs1 && lhs2 == rhs2
 }

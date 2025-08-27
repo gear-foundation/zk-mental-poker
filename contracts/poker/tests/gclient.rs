@@ -1,17 +1,17 @@
-use std::{thread::sleep, time};
+// use std::{thread::sleep, time};
 
-use gclient::EventListener;
+// use gclient::EventListener;
 use gclient::{GearApi, Result};
 use sails_rs::{ActorId, Decode, Encode};
 mod utils_gclient;
 use crate::zk_loader::ZkLoaderData;
-use crate::{build_player_card_disclosure, init_deck_and_card_map};
+// use crate::{build_player_card_disclosure, init_deck_and_card_map};
 use gclient::EventProcessor;
 use gear_core::ids::prelude::CodeIdExt;
-use gear_core::ids::{CodeId, ProgramId};
-use poker_client::SessionConfig;
-use poker_client::ZkPublicKey;
-use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
+use gear_core::ids::CodeId;
+// use poker_client::SessionConfig;
+// use poker_client::ZkPublicKey;
+// use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
 use sails_rs::TypeInfo;
 
 use poker_factory_client::SignatureInfo;
@@ -52,7 +52,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         .await
         .expect("Error upload program bytes");
     assert!(listener.message_processed(message_id).await?.succeed());
-    println!("zk_program_id {:?}", zk_program_id);
+    println!("zk_program_id {zk_program_id:?}");
 
     let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
 
@@ -89,7 +89,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     assert!(listener.message_processed(message_id).await?.succeed());
     let pts_id_bytes: [u8; 32] = pts_program_id.into();
     let pts_id: ActorId = pts_id_bytes.into();
-    println!("pts_program_id {:?}", pts_program_id);
+    println!("pts_program_id {pts_program_id:?}");
 
     // Factory
 
@@ -113,7 +113,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
         .expect("Error upload program bytes");
     assert!(listener.message_processed(message_id).await?.succeed());
 
-    println!("factory_id {:?}", factory_program_id);
+    println!("factory_id {factory_program_id:?}");
 
     // make admin in PTS
     println!("add admin");
@@ -148,7 +148,7 @@ async fn upload_contracts_to_testnet() -> Result<()> {
     let gas = api
         .calculate_handle_gas(None, factory_program_id, request, 1_000_000_000_000, true)
         .await?;
-    println!("GAS {:?}", gas);
+    println!("GAS {gas:?}");
 
     let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone(), None::<SignatureInfo>), value: 1_000_000_000_000);
     assert!(listener.message_processed(message_id).await?.succeed());
