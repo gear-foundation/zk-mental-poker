@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use ark_ec::CurveGroup;
 use ark_ec::PrimeGroup;
 use ark_ed_on_bls12_381_bandersnatch::{EdwardsProjective as G, Fq, Fr};
@@ -48,9 +49,9 @@ type Gt = <Bls12_381 as Pairing>::TargetField;
 fn hash_prefix_agrees() {
     let g = G::generator();
     println!("g = {:?}", g);
-    let p2 = (g + g);
+    let p2 = g + g;
     println!("p2 = {:?}", p2);
-    let p3 = (p2 + g);
+    let p3 = p2 + g;
     println!("p3 = {:?}", p3);
     let result = hash_to_fr(&[g, p2, p3]);
     println!("result = {:?}", result);
@@ -218,9 +219,10 @@ async fn gtest_check_null_balance() {
         .await
         .unwrap();
     println!("result {:?}", result);
-    if !matches!(result, Status::Finished { .. }) {
-        assert!(true, "Wrong Status!");
-    }
+    assert!(
+        matches!(result, Status::Finished { .. }),
+        "Wrong status: {result:?}"
+    );
     let participants = env
         .service_client
         .participants()
@@ -923,7 +925,7 @@ impl TestEnvironment {
         let g = G::generator();
         for (i, user) in USERS.iter().enumerate() {
             let partial_decs =
-                get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()].to_vec());
+                get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()]);
             let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
             let sk = test_data.sks[i].1.scalar;
             let mut items = Vec::new();
@@ -1174,27 +1176,27 @@ fn hash_to_fr(points: &[G]) -> Fr {
 }
 
 // prove: D = c1^sk and pk = g^sk
-pub fn prove(g: G, pk: G, c1: G, D: G, sk: Fr) -> ChaumPedersenProof {
+pub fn prove(g: G, pk: G, c1: G, d: G, sk: Fr) -> ChaumPedersenProof {
     let r = Fr::rand(&mut rand::thread_rng());
 
-    let A = g * r;
-    let B = c1 * r;
+    let a = g * r;
+    let b = c1 * r;
 
-    let c = hash_to_fr(&[g, pk, c1, D, A, B]);
+    let c = hash_to_fr(&[g, pk, c1, d, a, b]);
 
     let z = r + c * sk;
 
-    ChaumPedersenProof { a: A, b: B, z }
+    ChaumPedersenProof { a, b, z }
 }
 
-pub fn verify(g: G, pk: G, c1: G, D: G, proof: &ChaumPedersenProof) -> bool {
-    let c = hash_to_fr(&[g, pk, c1, D, proof.a, proof.b]);
+pub fn verify(g: G, pk: G, c1: G, d: G, proof: &ChaumPedersenProof) -> bool {
+    let c = hash_to_fr(&[g, pk, c1, d, proof.a, proof.b]);
 
     let lhs1 = g * proof.z;
     let rhs1 = proof.a + pk * c;
 
     let lhs2 = c1 * proof.z;
-    let rhs2 = proof.b + D * c;
+    let rhs2 = proof.b + d * c;
 
     lhs1 == rhs1 && lhs2 == rhs2
 }
