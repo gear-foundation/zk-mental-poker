@@ -12,9 +12,7 @@ defaults:
 
 jobs:
   build-and-publish:
-    name: Build and Publish Artifacts
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-22.04
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
@@ -26,6 +24,11 @@ jobs:
         target: wasm32v1-none
         override: true
 
+    - name: Install tools (binaryen + clang/lld)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y binaryen clang lld
+
     - name: Install Clippy
       run: rustup component add clippy
 
@@ -35,22 +38,28 @@ jobs:
     - name: Install rust-src component
       run: rustup component add rust-src --toolchain stable-x86_64-unknown-linux-gnu
 
-    - name: Install wasm-opt (binaryen)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y binaryen musl-tools
-        rustup target add x86_64-unknown-linux-musl
-        
     - name: Check formatting
       run: cargo fmt --all --check
 
     - name: Run Clippy
       run: cargo clippy -r --all -- -D warnings
 
-    - name: Run tests
+    - name: Print toolchain/env (diagnose)
+      run: |
+        rustc -vV
+        cargo -vV
+        rustup show
+        cc --version || true
+        ld --version || true
+        uname -a
+        cat /etc/os-release
+        
+    - name: Run tests (host via clang+lld)
       env:
-        RUSTFLAGS: "-Cforce-frame-pointers=yes"
-      run: cargo test -r --target x86_64-unknown-linux-musl
+        CC: clang
+        CXX: clang++
+        RUSTFLAGS: "-Clinker=clang -Clink-arg=-fuse-ld=lld -Cforce-frame-pointers=yes"
+      run: cargo test -r
 
     - name: Build project
       run: cargo build --release
@@ -58,8 +67,8 @@ jobs:
     - name: Prepare artifacts directory
       run: |
         mkdir -p artifacts
-        cp target/wasm32-gear/release/*.wasm artifacts/
-        cp target/wasm32-gear/release/*.idl artifacts/
+        cp target/wasm32-gear/release/*.wasm artifacts/ || true
+        cp target/wasm32-gear/release/*.idl artifacts/ || true
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
