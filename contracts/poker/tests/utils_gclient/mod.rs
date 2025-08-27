@@ -278,7 +278,7 @@ pub fn build_card_map(deck: Vec<EdwardsProjective>) -> HashMap<EdwardsProjective
 
 pub fn build_player_card_disclosure(
     data: Vec<(ZkPublicKey, Vec<DecryptedCardWithProof>)>,
-    card_map: &HashMap<EdwardsProjective, Card>,
+    _card_map: &HashMap<EdwardsProjective, Card>,
 ) -> Vec<(ZkPublicKey, Vec<VerificationVariables>)> {
     let mut result = Vec::new();
 
