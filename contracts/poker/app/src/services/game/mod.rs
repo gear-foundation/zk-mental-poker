@@ -1274,6 +1274,13 @@ impl PokerService {
             .cloned()
     }
 
+    pub fn encrypted_cards(&self, player_id: ActorId) -> Option<[EncryptedCard; 2]> {
+        self.get()
+            .encrypted_cards
+            .get(&player_id)
+            .cloned()
+    }
+
     pub fn encrypted_table_cards(&self) -> Vec<EncryptedCard> {
         self.get().table_cards.clone()
     }
