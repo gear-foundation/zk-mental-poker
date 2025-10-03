@@ -6401,7 +6401,7 @@ dependencies = [
 [[package]]
 name = "session-service"
 version = "0.1.0"
-source = "git+https://github.com/gear-foundation/signless-gasless-session-service.git#b459878464c7d177bbbe3962ae7b8d866c1186c2"
+source = "git+https://github.com/gear-foundation/signless-gasless-session-service.git?rev=3b53fec000b43bfe465a4a7b79b0488e7f554ba7#3b53fec000b43bfe465a4a7b79b0488e7f554ba7"
 dependencies = [
  "gstd",
  "sails-rs",
