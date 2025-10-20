@@ -165,6 +165,10 @@ pub enum Event {
         participant_id: ActorId,
         pk: ZkPublicKey,
     },
+    AdminChanged {
+        old_admin: ActorId,
+        new_admin: ActorId,
+    },
 }
 
 pub struct PokerService(());
@@ -479,6 +483,27 @@ impl PokerService {
         storage
             .participants
             .append(&mut storage.waiting_participants);
+
+        if !storage
+            .participants
+            .iter()
+            .any(|(id, _)| *id == storage.config.admin_id)
+        {
+            if let Some((new_admin, _)) = storage
+                .participants
+                .iter()
+                .max_by(|a, b| a.1.balance.cmp(&b.1.balance).then(a.0.cmp(&b.0)))
+            {
+                let old_admin = storage.config.admin_id;
+                storage.config.admin_id = *new_admin;
+                self.emit_event(Event::AdminChanged {
+                    old_admin,
+                    new_admin: *new_admin,
+                })
+                .ok();
+            } else {
+            }
+        }
 
         for (id, _) in storage.participants.iter() {
             storage.active_participants.add(*id);
@@ -938,6 +963,64 @@ impl PokerService {
         }
 
         let betting = storage.betting.as_mut().expect("No betting");
+        let current_time = exec::block_timestamp();
+
+        if let Some(last_active_time) = betting.last_active_time {
+            let number_of_passes =
+                (current_time - last_active_time) / storage.config.time_per_move_ms;
+
+            if number_of_passes != 0 {
+                if storage.active_participants.len() > 0 {
+                    let _ = storage
+                        .active_participants
+                        .skip_and_remove(number_of_passes);
+                }
+
+                let remaining_cnt =
+                    storage.active_participants.len() + storage.all_in_players.len();
+                if remaining_cnt == 1 {
+                    let winner = if let Some(w) = storage.active_participants.get(0).copied() {
+                        w
+                    } else {
+                        *storage.all_in_players.first().expect("winner must exist")
+                    };
+                    let prize: u128 = storage.betting_bank.values().copied().sum();
+
+                    let (_, win_participant) = storage
+                        .participants
+                        .iter_mut()
+                        .find(|(id, _)| *id == winner)
+                        .expect("winner must be a participant");
+                    win_participant.balance += prize;
+
+                    storage.status = Status::Finished {
+                        pots: vec![(prize, vec![winner])],
+                    };
+                    storage.betting = None;
+
+                    self.emit_event(Event::Finished {
+                        pots: vec![(prize, vec![winner])],
+                    })
+                    .expect("Event Error");
+                    return;
+                }
+
+                let now_turn = *storage
+                    .active_participants
+                    .current()
+                    .expect("There must be a current player");
+                betting.turn = now_turn;
+                if now_turn != player {
+                    panic!("Not your turn!");
+                }
+            } else if betting.turn != player {
+                panic!("Not your turn!");
+            }
+        } else {
+            if betting.turn != player {
+                panic!("Not your turn!");
+            }
+        }
 
         let (_, participant) = storage
             .participants
@@ -945,52 +1028,35 @@ impl PokerService {
             .find(|(id, _)| *id == player)
             .expect("There is no such participant");
 
-        let last_active_time = betting.last_active_time.expect("No last active time");
-        let current_time = exec::block_timestamp();
-        let number_of_passes = (current_time - last_active_time) / storage.config.time_per_move_ms;
-
-        if number_of_passes != 0 {
-            if let Some(next_or_last) = storage
-                .active_participants
-                .skip_and_remove(number_of_passes)
-            {
-                if storage.active_participants.len() <= 1 {
-                    let prize = storage.betting_bank.values().sum();
-                    participant.balance += prize;
-                    storage.status = Status::Finished {
-                        pots: vec![(prize, vec![next_or_last])],
-                    };
-                    storage.betting = None;
-                    self.emit_event(Event::Finished {
-                        pots: vec![(prize, vec![next_or_last])],
-                    })
-                    .expect("Event Error");
-                    return;
-                } else if next_or_last != player {
-                    panic!("Not your turn!");
-                }
-            } else {
-                panic!("No active players");
-            }
-        } else if betting.turn != player {
-            panic!("Not your turn!");
-        }
-        // Process the player's action
         match action {
             Action::Fold => {
                 storage.active_participants.remove(&player);
             }
+
             Action::Call => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
-                let call_value = betting.current_bet - already_invested;
-                if call_value == 0 || participant.balance <= call_value {
+                let call_value = betting.current_bet.saturating_sub(already_invested);
+
+                if call_value == 0 {
                     panic!("Wrong action");
                 }
+                if participant.balance < call_value {
+                    panic!("Not enough balance");
+                }
+
+                let will_all_in = participant.balance == call_value;
+
                 participant.balance -= call_value;
-                betting.acted_players.push(player);
+
+                if will_all_in {
+                    storage.all_in_players.push(player);
+                    storage.active_participants.remove(&player);
+                } else {
+                    betting.acted_players.push(player);
+                }
                 storage
                     .already_invested_in_the_circle
                     .entry(player)
@@ -1020,42 +1086,54 @@ impl PokerService {
                     .get(&player)
                     .unwrap_or(&0);
 
-                if participant.balance <= bet {
+                if participant.balance < bet {
                     panic!("Wrong action");
                 }
                 if already_invested + bet <= betting.current_bet {
                     panic!("Raise must be higher");
                 }
+
                 betting.current_bet = already_invested + bet;
+
+                let will_all_in = participant.balance == bet;
                 participant.balance -= bet;
-                // if someone raises the bet, the betting round starts all over again
-                // so it is necessary to clear the acted_players
+
                 betting.acted_players.clear();
-                betting.acted_players.push(player);
+                if !will_all_in {
+                    betting.acted_players.push(player);
+                }
+
                 storage
                     .already_invested_in_the_circle
                     .entry(player)
                     .and_modify(|v| *v += bet)
                     .or_insert(bet);
+
                 storage
                     .betting_bank
                     .entry(player)
                     .and_modify(|v| *v += bet)
                     .or_insert(bet);
+
+                if will_all_in {
+                    storage.all_in_players.push(player);
+                    storage.active_participants.remove(&player);
+                }
             }
+
             Action::AllIn => {
                 let already_invested = *storage
                     .already_invested_in_the_circle
                     .get(&player)
                     .unwrap_or(&0);
                 let bet = already_invested + participant.balance;
+
                 if bet > betting.current_bet {
                     betting.current_bet = bet;
                     betting.acted_players.clear();
                 }
 
                 storage.all_in_players.push(player);
-                // if a player has made a all in, we remove him from the active_participants, so that he no longer participates in bets
                 storage.active_participants.remove(&player);
                 storage
                     .already_invested_in_the_circle
@@ -1071,37 +1149,38 @@ impl PokerService {
             }
         }
 
-        // Check if the game should end immediately (only one player left)
-        if storage.active_participants.len() + storage.all_in_players.len() == 1 {
-            let winner = if storage.active_participants.is_empty() {
-                storage
+        let remaining_cnt = storage.active_participants.len() + storage.all_in_players.len();
+        if remaining_cnt == 1 {
+            let winner = if let Some(w) = storage.active_participants.get(0).copied() {
+                w
+            } else {
+                *storage
                     .all_in_players
                     .first()
                     .expect("The player must exist")
-            } else {
-                storage
-                    .active_participants
-                    .get(0)
-                    .expect("The player must exist")
             };
-            let prize = storage.betting_bank.values().sum();
+
+            let prize: u128 = storage.betting_bank.values().copied().sum();
             let (_, participant) = storage
                 .participants
                 .iter_mut()
-                .find(|(id, _)| id == winner)
+                .find(|(id, _)| *id == winner)
                 .expect("There is no such participant");
 
             participant.balance += prize;
             storage.status = Status::Finished {
-                pots: vec![(prize, vec![*winner])],
+                pots: vec![(prize, vec![winner])],
             };
+            storage.betting = None;
+
             self.emit_event(Event::Finished {
-                pots: vec![(prize, vec![*winner])],
+                pots: vec![(prize, vec![winner])],
             })
             .expect("Event Error");
+            return;
         }
-        // Check if the round is complete at the River stage
-        else if betting.acted_players.len() == storage.active_participants.len()
+
+        if betting.acted_players.len() == storage.active_participants.len()
             && *stage == Stage::River
         {
             storage.status = Status::WaitingForCardsToBeDisclosed;
@@ -1275,10 +1354,7 @@ impl PokerService {
     }
 
     pub fn encrypted_cards(&self, player_id: ActorId) -> Option<[EncryptedCard; 2]> {
-        self.get()
-            .encrypted_cards
-            .get(&player_id)
-            .cloned()
+        self.get().encrypted_cards.get(&player_id).cloned()
     }
 
     pub fn encrypted_table_cards(&self) -> Vec<EncryptedCard> {

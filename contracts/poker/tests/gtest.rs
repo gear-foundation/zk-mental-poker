@@ -251,7 +251,7 @@ async fn gtest_check_null_balance() {
         .recv(env.program_id)
         .await
         .unwrap();
-    assert_eq!(participants.len(), 2);
+    assert_eq!(participants.len(), 1);
 }
 
 #[tokio::test]
