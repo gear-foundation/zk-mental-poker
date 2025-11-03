@@ -392,17 +392,21 @@ pub fn evaluate_round(
 
     let mut results: Vec<(u128, Vec<ActorId>)> = Vec::new();
     for (eligible, pot_amount) in pots {
-        let mut ranked: Vec<_> = eligible
+        let mut ranked: Vec<(&ActorId, &HandRank)> = eligible
             .iter()
             .filter_map(|id| rankings.get(id).map(|r| (id, r)))
             .collect();
 
-        ranked.sort_by(|a, b| b.1.cmp(a.1)); // strongest hand first
+        if ranked.is_empty() {
+            continue;
+        }
 
-        if let Some(best_rank) = ranked.clone().first().map(|(_, rank)| rank) {
+        ranked.sort_by(|a, b| b.1.cmp(a.1));
+
+        if let Some(best_rank) = ranked.first().map(|(_, r)| (*r).clone()) {
             let winners: Vec<ActorId> = ranked
                 .into_iter()
-                .filter(|(_, rank)| rank == best_rank)
+                .take_while(|(_, r)| *r == &best_rank)
                 .map(|(id, _)| *id)
                 .collect();
 
