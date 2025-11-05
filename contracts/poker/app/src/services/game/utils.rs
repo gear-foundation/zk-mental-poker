@@ -266,7 +266,7 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
         suits.entry(card.suit.clone()).or_default().push(card.value);
     }
 
-    // ----- Straight Flush (looking for a COMPLETE set of master cards) -----
+    // ----- Straight Flush -----
     let mut best_sf: Option<u8> = None;
     for vs in suits.values() {
         if vs.len() >= 5 {
@@ -279,48 +279,23 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
         return HandRank::StraightFlush(h);
     }
 
-    // Preparing counters by values
     values.sort_by(|a, b| b.cmp(a));
-    // For High Card and Flush, we only use the top 5 where necessary.
     let mut counts: HashMap<u8, u8> = HashMap::with_capacity(7);
     for &v in &values {
         *counts.entry(v).or_insert(0) += 1;
     }
-
     let mut count_vec: Vec<_> = counts.iter().collect();
-    // sorting: by multiplicity, then by value
     count_vec.sort_by(|a, b| b.1.cmp(a.1).then(b.0.cmp(a.0)));
+
+    // ----- Four of a Kind / Full House -----
     match count_vec[..] {
         [(&a, &4), (&b, _), ..] => return HandRank::FourOfAKind(a, b),
         [(&a, &3), (&b, &3), ..] => return HandRank::FullHouse(a.max(b), a.min(b)),
         [(&a, &3), (&b, &2), ..] => return HandRank::FullHouse(a, b),
-        [(&a, &3), ..] => {
-            let kickers: Vec<u8> = values.iter().copied().filter(|&v| v != a).take(2).collect();
-            return HandRank::ThreeOfAKind(a, kickers);
-        }
-        [(&a, &2), (&b, &2), ..] if a != b => {
-            let kicker = count_vec
-                .iter()
-                .filter_map(|&(&val, &cnt)| {
-                    if val != a && val != b && cnt >= 1 {
-                        Some(val)
-                    } else {
-                        None
-                    }
-                })
-                .max()
-                .unwrap_or(0);
-            return HandRank::TwoPair(a.max(b), a.min(b), kicker);
-        }
-        [(&a, &2), ..] => {
-            let kickers: Vec<u8> = values.iter().copied().filter(|&v| v != a).take(3).collect();
-            return HandRank::Pair(a, kickers);
-        }
-
         _ => {}
     }
 
-    // ----- Flush (take the TOP 5 in the lexicographical sense) -----
+    // ----- Flush -----
     let mut best_flush: Option<Vec<u8>> = None;
     for vs in suits.values() {
         if vs.len() >= 5 {
@@ -336,16 +311,38 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
         return HandRank::Flush(s);
     }
 
-    // ----- Straight (highest) -----
+    // ----- Straight -----
     if let Some(h) = highest_straight_high(&values) {
         return HandRank::Straight(h);
     }
 
-    // ----- High card: only the top 5 -----
+    // ----- Trips / TwoPair / Pair -----
+    match count_vec[..] {
+        [(&a, &3), ..] => {
+            let kickers: Vec<u8> = values.iter().copied().filter(|&v| v != a).take(2).collect();
+            return HandRank::ThreeOfAKind(a, kickers);
+        }
+        [(&a, &2), (&b, &2), ..] if a != b => {
+            let kicker = count_vec
+                .iter()
+                .filter_map(|&(&val, &cnt)| if val != a && val != b && cnt >= 1 { Some(val) } else { None })
+                .max()
+                .unwrap_or(0);
+            return HandRank::TwoPair(a.max(b), a.min(b), kicker);
+        }
+        [(&a, &2), ..] => {
+            let kickers: Vec<u8> = values.iter().copied().filter(|&v| v != a).take(3).collect();
+            return HandRank::Pair(a, kickers);
+        }
+        _ => {}
+    }
+
+    // ----- High card -----
     let mut top5 = values.clone();
     top5.truncate(5);
     HandRank::HighCard(top5)
 }
+
 
 pub fn evaluate_round(
     hands: HashMap<ActorId, (Card, Card)>,
@@ -1045,4 +1042,252 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn flush_beats_two_pair_even_if_pair_present() {
+        let table = [
+            Card::new(Suit::Hearts, 2),
+            Card::new(Suit::Hearts, 9),
+            Card::new(Suit::Hearts, 5),
+            Card::new(Suit::Diamonds, 7), 
+            Card::new(Suit::Clubs, 7),
+        ];
+
+        let mut hands = HashMap::new();
+        // A: (A-high flush)
+        hands.insert(1.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3))); // A♥,3♥
+        // B: pair K7
+        hands.insert(2.into(), (Card::new(Suit::Spades, 13), Card::new(Suit::Diamonds, 13))); // K♠,K♦
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table, &bank);
+        assert_eq!(pots, vec![(200, vec![1.into()])]);
+    }
+
+    #[test]
+    fn pair_vs_pair_kicker_ace_wins() {
+        let table_cards = [
+            Card::new(Suit::Hearts, 12),  // Q
+            Card::new(Suit::Clubs, 12),   // Q
+            Card::new(Suit::Clubs, 8),
+            Card::new(Suit::Diamonds, 5),
+            Card::new(Suit::Spades, 3),
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 9))); // A,9
+        hands.insert(2.into(), (Card::new(Suit::Diamonds, 13), Card::new(Suit::Diamonds, 11))); // K,J
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(200, vec![1.into()])]);
+    }
+
+    #[test]
+    fn pair_split_all_kickers_equal() {
+        let table_cards = [
+            Card::new(Suit::Hearts, 12),    // Q
+            Card::new(Suit::Clubs, 12),     // Q
+            Card::new(Suit::Diamonds, 10),  // 10
+            Card::new(Suit::Clubs, 9),      // 9
+            Card::new(Suit::Spades, 8),     // 8
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 7))); // A,7
+        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 7))); // A,7
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(200, vec![1.into(), 2.into()])]);
+    }
+
+    #[test]
+    fn two_pair_beats_pair() {
+        let table_cards = [
+            Card::new(Suit::Clubs, 13),   // K
+            Card::new(Suit::Diamonds, 13),// K
+            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Spades, 5),
+            Card::new(Suit::Clubs, 2),
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 4))); // 9,4
+        hands.insert(2.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3)));    // A,3
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(200, vec![1.into()])]);
+    }
+
+    #[test]
+    fn two_pair_tie_kicker_decides() {
+        let table_cards = [
+            Card::new(Suit::Clubs, 13),   // K
+            Card::new(Suit::Diamonds, 13),// K
+            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Spades, 5),
+            Card::new(Suit::Clubs, 2),
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 14))); // 9,A
+        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Clubs, 12)));    // 9,Q
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 200);
+        bank.insert(2.into(), 200);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(400, vec![1.into()])]);
+    }
+
+    #[test]
+    fn two_pair_split_same_kicker() {
+        let table_cards = [
+            Card::new(Suit::Clubs, 13),   // K
+            Card::new(Suit::Diamonds, 13),// K
+            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Spades, 5),
+            Card::new(Suit::Clubs, 14),   // A
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 12))); // 9,Q
+        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Clubs, 3)));     // 9,3
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 150);
+        bank.insert(2.into(), 150);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(300, vec![1.into(), 2.into()])]);
+    }
+
+    #[test]
+    fn trips_tie_kickers_decide() {
+        let table = [
+            Card::new(Suit::Spades, 7),
+            Card::new(Suit::Hearts, 7),
+            Card::new(Suit::Diamonds, 7),
+            Card::new(Suit::Clubs, 13), // K
+            Card::new(Suit::Clubs, 12), // Q
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10))); // A,10
+        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)));   // A,9
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table, &bank);
+        assert_pots_eq(pots, vec![(200, vec![1.into(), 2.into()])]);
+    }
+
+    #[test]
+    fn trips_kickers_hand_decides() {
+        let table = [
+            Card::new(Suit::Spades, 7),
+            Card::new(Suit::Hearts, 7),
+            Card::new(Suit::Diamonds, 7),
+            Card::new(Suit::Clubs, 8),
+            Card::new(Suit::Clubs, 2),
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10))); // A,10
+        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)));   // A,9
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table, &bank);
+
+        assert_pots_eq(pots, vec![(200, vec![1.into()])]);
+    }
+
+
+    #[test]
+    fn trips_beats_two_pair_general() {
+        let table = [
+            Card::new(Suit::Hearts, 8),
+            Card::new(Suit::Spades, 6),
+            Card::new(Suit::Clubs, 13), // K
+            Card::new(Suit::Diamonds, 2),
+            Card::new(Suit::Clubs, 3),
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Diamonds, 8), Card::new(Suit::Hearts, 8))); // 8,8 → Trips
+        hands.insert(2.into(), (Card::new(Suit::Spades, 13),  Card::new(Suit::Diamonds, 8))); // K,8 → TwoPair
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 120);
+        bank.insert(2.into(), 120);
+
+        let pots = evaluate_round(hands, table, &bank);
+        assert_pots_eq(pots, vec![(240, vec![1.into()])]);
+    }
+
+    #[test]
+    fn board_broadway_straight_split() {
+        let table_cards = [
+            Card::new(Suit::Clubs, 10),     // T
+            Card::new(Suit::Diamonds, 11),  // J
+            Card::new(Suit::Hearts, 12),    // Q
+            Card::new(Suit::Spades, 13),    // K
+            Card::new(Suit::Clubs, 14),     // A
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Diamonds, 14)));
+        hands.insert(2.into(), (Card::new(Suit::Clubs, 2), Card::new(Suit::Spades, 2)));
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(200, vec![1.into(), 2.into()])]);
+    }
+
+    #[test]
+    fn straight_beats_trips() {
+        let table_cards = [
+            Card::new(Suit::Clubs, 2),
+            Card::new(Suit::Diamonds, 3),
+            Card::new(Suit::Hearts, 4),
+            Card::new(Suit::Spades, 9),
+            Card::new(Suit::Diamonds, 13), // K
+        ];
+
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Hearts, 9), Card::new(Suit::Diamonds, 9)));
+        hands.insert(2.into(), (Card::new(Suit::Clubs, 5), Card::new(Suit::Diamonds, 6)));
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 100);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_pots_eq(pots, vec![(200, vec![2.into()])]);
+    }
+
+
 }
