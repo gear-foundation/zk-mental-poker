@@ -1306,16 +1306,22 @@ impl PokerService {
             .chain(storage.all_in_players.iter())
             .cloned()
             .collect();
-        let players: HashSet<ActorId> = storage.revealed_players.keys().cloned().collect();
 
-        if players.is_superset(&expected_players) {
+        if self.ids_equal(&storage) {
             let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
                 Ok(array) => array,
                 Err(_) => unreachable!(),
             };
 
+            let revealed_for_eval = storage
+                .revealed_players
+                .iter()
+                .filter(|(player_id, _)| expected_players.contains(*player_id))
+                .map(|(id, hand)| (*id, hand.clone()))
+                .collect();
+
             let pots = evaluate_round(
-                storage.revealed_players.clone(),
+                revealed_for_eval,
                 table_cards,
                 &storage.betting_bank,
             );
@@ -1343,6 +1349,12 @@ impl PokerService {
         }
 
         self.emit_event(Event::CardsDisclosed).expect("Event Error");
+    }
+
+    fn ids_equal(&self, storage: &Storage) -> bool {
+        let part_ids: HashSet<ActorId> = storage.participants.iter().map(|(id, _)| *id).collect();
+        let rev_ids: HashSet<ActorId> = storage.revealed_players.keys().cloned().collect();
+        part_ids == rev_ids
     }
 
     // Query
