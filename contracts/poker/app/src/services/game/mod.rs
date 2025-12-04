@@ -267,28 +267,24 @@ async fn remove_participant_if_registered(
     storage: &mut Storage,
     player_id: ActorId,
 ) -> Option<u128> {
-    // The main list of participants
     if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == player_id) {
         match storage.status {
-            Status::Registration
-            | Status::WaitingShuffleVerification
-            | Status::WaitingStart
-            | Status::Finished { .. } => (),
-            _ => panic!("Wrong status"),
+            Status::Registration | Status::Finished { .. } => {
+                let balance = participant.balance;
+
+                storage.participants.retain(|(id, _)| *id != player_id);
+                storage
+                    .active_participants
+                    .remove_and_update_first_index(&player_id);
+
+                return Some(balance);
+            }
+            _ => {
+                panic!("Cannot cancel registration while game is in progress");
+            }
         }
-
-        let balance = participant.balance;
-
-        storage.participants.retain(|(id, _)| *id != player_id);
-        storage
-            .active_participants
-            .remove_and_update_first_index(&player_id);
-
-        storage.status = Status::Registration;
-        return Some(balance);
     }
 
-    // Waiting participants
     if let Some((_, participant)) = storage
         .waiting_participants
         .iter()
@@ -381,7 +377,7 @@ impl PokerService {
             panic!("Already registered");
         }
 
-        if storage.participants.len() == 9 {
+        if storage.participants.len() == 8 {
             panic!("Alerady max amount of players");
         }
 
@@ -423,14 +419,6 @@ impl PokerService {
         }
     }
 
-    /// Cancels player registration and refunds their balance via PTS contract.
-    ///
-    /// Panics if:
-    /// - current status is invalid for cancellation;
-    /// - caller is not a registered player.
-    ///
-    /// Sends a transfer request to PTS contract to return points to the player.
-    /// Removes player data and emits `RegistrationCanceled` event on success.
     pub async fn cancel_registration(&mut self, session_for_account: Option<ActorId>) {
         let storage = self.get_mut();
         let player_id = get_player(&session_for_account);
@@ -439,19 +427,24 @@ impl PokerService {
             panic!("Access denied");
         }
 
-        if let Some((_, participant)) = storage.participants.iter().find(|(id, _)| *id == player_id)
-        {
-            storage.agg_pub_key = substract_agg_pub_key(&storage.agg_pub_key, &participant.pk);
-        }
-        if let Some(balance) = remove_participant_if_registered(storage, player_id).await {
-            pts_transfer(storage.pts_actor_id, exec::program_id(), player_id, balance).await;
+        let participant_pk = storage
+            .participants
+            .iter()
+            .find(|(id, _)| *id == player_id)
+            .map(|(_, participant)| participant.pk.clone());
 
+        if let Some(balance) = remove_participant_if_registered(storage, player_id).await {
+            if let Some(pk) = participant_pk {
+                storage.agg_pub_key = substract_agg_pub_key(&storage.agg_pub_key, &pk);
+            }
+            pts_transfer(storage.pts_actor_id, exec::program_id(), player_id, balance).await;
             self.emit_event(Event::RegistrationCanceled { player_id })
                 .expect("Event Error");
         } else {
             panic!("You are not registered");
         }
     }
+
 
     /// Restarts the game, resetting status and refunding bets (if not Finished).
     /// Panics if caller is not admin.
@@ -970,11 +963,13 @@ impl PokerService {
                 (current_time - last_active_time) / storage.config.time_per_move_ms;
 
             if number_of_passes != 0 {
-                if storage.active_participants.len() > 0 {
-                    let _ = storage
+                let next_after_skips = if storage.active_participants.len() > 0 {
+                    storage
                         .active_participants
-                        .skip_and_remove(number_of_passes);
-                }
+                        .skip_and_remove(number_of_passes)
+                } else {
+                    None
+                };
 
                 let remaining_cnt =
                     storage.active_participants.len() + storage.all_in_players.len();
@@ -1005,10 +1000,14 @@ impl PokerService {
                     return;
                 }
 
-                let now_turn = *storage
-                    .active_participants
-                    .current()
-                    .expect("There must be a current player");
+                let now_turn = if let Some(id) = next_after_skips {
+                    id
+                } else {
+                    *storage
+                        .active_participants
+                        .current()
+                        .expect("There must be a current player")
+                };
                 betting.turn = now_turn;
                 if now_turn != player {
                     panic!("Not your turn!");
