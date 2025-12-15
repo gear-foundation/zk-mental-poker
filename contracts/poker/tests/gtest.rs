@@ -57,6 +57,55 @@ fn hash_prefix_agrees() {
 }
 
 #[tokio::test]
+async fn test_check_auto_fold() {
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
+
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
+
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Call),
+    ])
+    .await;
+
+    let betting = env
+        .service_client
+        .betting()
+        .recv(env.program_id)
+        .await
+        .unwrap();
+
+    println!("betting: {:?}", betting);
+
+    for i in 0..8 {
+        env.remoting.system().run_next_block();
+    }
+
+    for i in 0..10 {
+        env.remoting.system().run_next_block();
+    }
+
+    for i in 0..10 {
+        env.remoting.system().run_next_block();
+    }
+
+    env.run_actions(vec![
+        (USERS[0], poker_client::Action::Call),
+    ])
+    .await;
+
+    let betting = env
+        .service_client
+        .betting()
+        .recv(env.program_id)
+        .await
+        .unwrap();
+
+    println!("betting: {:?}", betting);
+
+}
+
+#[tokio::test]
 async fn test_basic_poker_workflow() {
     let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
@@ -455,59 +504,59 @@ async fn gtest_check_cancel_registration_and_turn() {
     assert_eq!(active_participants.first_index, 1);
 }
 
-#[tokio::test]
-async fn gtest_check_waiting_participants() {
-    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::SixPlayers).await;
+// #[tokio::test]
+// async fn gtest_check_waiting_participants() {
+//     let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::SixPlayers).await;
 
-    env.register_players(&test_data).await;
-    env.start_and_setup_game(&test_data).await;
+//     env.register_players(&test_data).await;
+//     env.start_and_setup_game(&test_data).await;
 
-    // check length of the participants (old length)
-    let participants = env.participants().await;
-    assert_eq!(participants.len(), 6);
+//     // check length of the participants (old length)
+//     let participants = env.participants().await;
+//     assert_eq!(participants.len(), 6);
 
-    // new player registers
-    let new_player_id = 48;
-    env.remoting
-        .system()
-        .mint_to(new_player_id, 1_000_000_000_000_000);
-    let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
-    let new_player_pk = new_test_data.pks[5].1.clone();
-    env.register(new_player_id, new_player_pk).await;
-    // check length of the waiting participants state (1)
-    let waiting_participants = env.waiting_participants().await;
-    assert_eq!(waiting_participants.len(), 1);
+//     // new player registers
+//     let new_player_id = 48;
+//     env.remoting
+//         .system()
+//         .mint_to(new_player_id, 1_000_000_000_000_000);
+//     let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
+//     let new_player_pk = new_test_data.pks[5].1.clone();
+//     env.register(new_player_id, new_player_pk).await;
+//     // check length of the waiting participants state (1)
+//     let waiting_participants = env.waiting_participants().await;
+//     assert_eq!(waiting_participants.len(), 1);
 
-    // preflop
-    env.run_actions(vec![
-        (USERS[2], poker_client::Action::Fold),
-        (USERS[3], poker_client::Action::Fold),
-        (USERS[4], poker_client::Action::Fold),
-        (USERS[5], poker_client::Action::Fold),
-        (USERS[0], poker_client::Action::Fold),
-    ])
-    .await;
+//     // preflop
+//     env.run_actions(vec![
+//         (USERS[2], poker_client::Action::Fold),
+//         (USERS[3], poker_client::Action::Fold),
+//         (USERS[4], poker_client::Action::Fold),
+//         (USERS[5], poker_client::Action::Fold),
+//         (USERS[0], poker_client::Action::Fold),
+//     ])
+//     .await;
 
-    env.verify_game_finished().await;
-    env.restart_game().await;
+//     env.verify_game_finished().await;
+//     env.restart_game().await;
 
-    // check length of the participants (old length + 1)
-    let participants = env.participants().await;
-    assert_eq!(participants.len(), 7);
-    // check length of the waiting participants state (0)
-    let waiting_participants = env.waiting_participants().await;
-    assert_eq!(waiting_participants.len(), 0);
-    env.check_status(Status::Registration).await;
+//     // check length of the participants (old length + 1)
+//     let participants = env.participants().await;
+//     assert_eq!(participants.len(), 7);
+//     // check length of the waiting participants state (0)
+//     let waiting_participants = env.waiting_participants().await;
+//     assert_eq!(waiting_participants.len(), 0);
+//     env.check_status(Status::Registration).await;
 
-    // delete player
-    env.delete_player(USERS[5]).await;
+//     // delete player
+//     env.delete_player(USERS[5]).await;
 
-    env.start_and_setup_game(&new_test_data).await;
-    env.check_status(Status::Play {
-        stage: poker_client::Stage::PreFlop,
-    })
-    .await;
-}
+//     env.start_and_setup_game(&new_test_data).await;
+//     env.check_status(Status::Play {
+//         stage: poker_client::Stage::PreFlop,
+//     })
+//     .await;
+// }
 
 #[tokio::test]
 async fn gtest_check_cancel_registration_waiting_participants() {

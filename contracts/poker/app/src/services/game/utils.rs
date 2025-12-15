@@ -51,45 +51,40 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
         Some(id)
     }
 
-    pub fn skip_and_remove(&mut self, n: u64) -> Option<Id> {
+    pub fn skip_and_remove(&mut self, mut n: u64) -> Option<Id> {
         if self.active_ids.is_empty() || n == 0 {
             return None;
         }
 
-        let mut last_removed = None;
+        let mut last_removed: Option<Id> = None;
 
-        let mut idx = if self.turn_index == 0 {
+        let mut current_idx = if self.turn_index == 0 {
             self.active_ids.len() - 1
         } else {
             (self.turn_index - 1) as usize
         };
 
-        for _ in 0..n {
-            if self.active_ids.is_empty() {
-                break;
+        while n > 0 && !self.active_ids.is_empty() {
+            if current_idx >= self.active_ids.len() {
+                current_idx = 0;
             }
 
-            if idx >= self.active_ids.len() {
-                idx = 0;
-            }
+            last_removed = Some(self.active_ids.remove(current_idx));
 
-            let removed = self.active_ids.remove(idx);
-            last_removed = Some(removed.clone());
-
-            if (self.turn_index as usize > idx)
-                || (self.turn_index as usize == idx && self.turn_index > 0)
-            {
-                self.turn_index -= 1;
-            }
+            n -= 1;
         }
 
-        let result_id = if self.active_ids.is_empty() {
-            last_removed.expect("At least one player should have been removed")
-        } else {
-            let id = self.active_ids[self.turn_index as usize].clone();
-            self.turn_index = (self.turn_index + 1) % self.active_ids.len() as u64;
-            id
-        };
+        if self.active_ids.is_empty() {
+            self.turn_index = 0;
+            return last_removed;
+        }
+
+        if current_idx >= self.active_ids.len() {
+            current_idx = 0;
+        }
+
+        let result_id = self.active_ids[current_idx].clone();
+        self.turn_index = ((current_idx as u64) + 1) % self.active_ids.len() as u64;
 
         Some(result_id)
     }
@@ -1289,5 +1284,81 @@ mod tests {
         assert_pots_eq(pots, vec![(200, vec![2.into()])]);
     }
 
+    fn tm_with(ids: &[u8], turn_index: u64) -> TurnManager<u8> {
+        let mut tm: TurnManager<u8> = TurnManager::new();
+        for &id in ids {
+            tm.add(id);
+        }
+        let mut tm = tm;
+        tm.turn_index = turn_index;
+        tm
+    }
 
+    #[test]
+    fn skip_and_remove_one_basic() {
+        let mut tm = tm_with(&[1, 2, 3, 4], 1);
+
+        let next = tm.skip_and_remove(1).expect("must have next");
+
+        assert_eq!(next, 2);
+        assert_eq!(tm.all(), &vec![2, 3, 4]);
+        assert_eq!(tm.turn_index, 1);
+    }
+
+    #[test]
+    fn skip_and_remove_two_in_row() {
+        let mut tm = tm_with(&[1, 2, 3, 4], 1);
+        let next = tm.skip_and_remove(2).expect("must have next");
+
+        assert_eq!(next, 3);
+        assert_eq!(tm.all(), &vec![3, 4]);
+        assert_eq!(tm.turn_index, 1);
+    }
+
+    #[test]
+    fn skip_and_remove_three_from_four() {
+        let mut tm = tm_with(&[1, 2, 3, 4], 1);
+
+        let next = tm.skip_and_remove(3).expect("must have next");
+
+        assert_eq!(next, 4);
+        assert_eq!(tm.all(), &vec![4]);
+        assert_eq!(tm.turn_index, 0);
+    }
+
+    #[test]
+    fn skip_and_remove_more_than_len() {
+        let mut tm = tm_with(&[1, 2, 3], 1);
+        let next = tm.skip_and_remove(10).expect("must have next");
+
+        assert_eq!(next, 3);
+        assert!(tm.is_empty());
+    }
+
+    #[test]
+    fn skip_and_remove_with_single_player() {
+        let mut tm = tm_with(&[7], 0);
+
+        let next = tm.skip_and_remove(1).expect("must have next");
+
+        assert_eq!(next, 7);
+        assert!(tm.is_empty());
+    }
+
+    #[test]
+    fn skip_and_remove_equivalent_to_repeated_single_skips() {
+
+        let mut tm_bulk = tm_with(&[1, 2, 3, 4], 1);
+        let mut tm_step = tm_bulk.clone();
+
+        let bulk_next = tm_bulk.skip_and_remove(3);
+        let mut step_next = None;
+        for _ in 0..3 {
+            step_next = tm_step.skip_and_remove(1);
+        }
+
+        assert_eq!(bulk_next, step_next);
+        assert_eq!(tm_bulk.all(), tm_step.all());
+        assert_eq!(tm_bulk.turn_index, tm_step.turn_index);
+    }
 }

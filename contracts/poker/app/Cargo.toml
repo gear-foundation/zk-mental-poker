@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sails-rs = { workspace = true, features = ["debug"] }
-# sails-rs.workspace = true
+sails-rs.workspace = true
 gstd.workspace = true
 hex-literal.workspace = true
 ark-ed-on-bls12-381-bandersnatch = { workspace = true, default-features = false }

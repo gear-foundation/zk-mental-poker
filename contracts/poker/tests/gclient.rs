@@ -28,132 +28,133 @@ use utils_gclient::*;
 //     turn_index: u64,
 // }
 
-#[tokio::test]
-async fn upload_contracts_to_testnet() -> Result<()> {
-    // let api = GearApi::dev().await?;
-    let api = GearApi::vara_testnet().await?;
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
+// #[tokio::test]
+// #[ignore]
+// async fn upload_contracts_to_testnet() -> Result<()> {
+//     // let api = GearApi::dev().await?;
+//     let api = GearApi::vara_testnet().await?;
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
 
-    println!("Upload zk verification contract");
-    let path = "../target/wasm32-gear/release/zk_verification.opt.wasm";
-    let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
-    let request = ["New".encode(), (shuffle_vkey).encode()].concat();
+//     println!("Upload zk verification contract");
+//     let path = "../target/wasm32-gear/release/zk_verification.opt.wasm";
+//     let shuffle_vkey = ZkLoaderData::load_verifying_key("tests/test_data/shuffle_vkey.json");
+//     let request = ["New".encode(), (shuffle_vkey).encode()].concat();
 
-    let (message_id, zk_program_id, _hash) = api
-        .upload_program_bytes(
-            gclient::code_from_os(path).unwrap(),
-            gclient::now_micros().to_le_bytes(),
-            request,
-            740_000_000_000,
-            0,
-        )
-        .await
-        .expect("Error upload program bytes");
-    assert!(listener.message_processed(message_id).await?.succeed());
-    println!("zk_program_id {:?}", zk_program_id);
+//     let (message_id, zk_program_id, _hash) = api
+//         .upload_program_bytes(
+//             gclient::code_from_os(path).unwrap(),
+//             gclient::now_micros().to_le_bytes(),
+//             request,
+//             740_000_000_000,
+//             0,
+//         )
+//         .await
+//         .expect("Error upload program bytes");
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     println!("zk_program_id {:?}", zk_program_id);
 
-    let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
+//     let poker_code_path = "../target/wasm32-gear/release/poker.opt.wasm";
 
-    let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
-    {
-        code_id
-    } else {
-        let code =
-            fs::read("../target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
-        CodeId::generate(code.as_ref())
-    };
-    let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
+//     let poker_code_id = if let Ok((code_id, _hash)) = api.upload_code_by_path(poker_code_path).await
+//     {
+//         code_id
+//     } else {
+//         let code =
+//             fs::read("../target/wasm32-gear/release/poker.opt.wasm").expect("Failed to read file");
+//         CodeId::generate(code.as_ref())
+//     };
+//     let pks = ZkLoaderData::load_player_public_keys("tests/test_data/player_pks.json");
 
-    // PTS
-    let path = "../target/wasm32-gear/release/pts.opt.wasm";
-    let accural: u128 = 10_000;
-    let time_ms_between_balance_receipt: u64 = 10_000;
-    let request = [
-        "New".encode(),
-        (accural, time_ms_between_balance_receipt).encode(),
-    ]
-    .concat();
+//     // PTS
+//     let path = "../target/wasm32-gear/release/pts.opt.wasm";
+//     let accural: u128 = 10_000;
+//     let time_ms_between_balance_receipt: u64 = 10_000;
+//     let request = [
+//         "New".encode(),
+//         (accural, time_ms_between_balance_receipt).encode(),
+//     ]
+//     .concat();
 
-    let (message_id, pts_program_id, _hash) = api
-        .upload_program_bytes(
-            gclient::code_from_os(path).unwrap(),
-            gclient::now_micros().to_le_bytes(),
-            request,
-            740_000_000_000,
-            0,
-        )
-        .await
-        .expect("Error upload program bytes");
-    assert!(listener.message_processed(message_id).await?.succeed());
-    let pts_id_bytes: [u8; 32] = pts_program_id.into();
-    let pts_id: ActorId = pts_id_bytes.into();
-    println!("pts_program_id {:?}", pts_program_id);
+//     let (message_id, pts_program_id, _hash) = api
+//         .upload_program_bytes(
+//             gclient::code_from_os(path).unwrap(),
+//             gclient::now_micros().to_le_bytes(),
+//             request,
+//             740_000_000_000,
+//             0,
+//         )
+//         .await
+//         .expect("Error upload program bytes");
+//     assert!(listener.message_processed(message_id).await?.succeed());
+//     let pts_id_bytes: [u8; 32] = pts_program_id.into();
+//     let pts_id: ActorId = pts_id_bytes.into();
+//     println!("pts_program_id {:?}", pts_program_id);
 
-    // Factory
+//     // Factory
 
-    let path = "../target/wasm32-gear/release/poker_factory.opt.wasm";
-    let config = Config {
-        lobby_code_id: poker_code_id,
-        gas_for_program: 680_000_000_000,
-        gas_for_reply_deposit: 10_000_000_000,
-    };
-    let request = ["New".encode(), (config, pts_id, zk_program_id).encode()].concat();
+//     let path = "../target/wasm32-gear/release/poker_factory.opt.wasm";
+//     let config = Config {
+//         lobby_code_id: poker_code_id,
+//         gas_for_program: 680_000_000_000,
+//         gas_for_reply_deposit: 10_000_000_000,
+//     };
+//     let request = ["New".encode(), (config, pts_id, zk_program_id).encode()].concat();
 
-    let (message_id, factory_program_id, _hash) = api
-        .upload_program_bytes(
-            gclient::code_from_os(path).unwrap(),
-            gclient::now_micros().to_le_bytes(),
-            request,
-            740_000_000_000,
-            10_000_000_000_000,
-        )
-        .await
-        .expect("Error upload program bytes");
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let (message_id, factory_program_id, _hash) = api
+//         .upload_program_bytes(
+//             gclient::code_from_os(path).unwrap(),
+//             gclient::now_micros().to_le_bytes(),
+//             request,
+//             740_000_000_000,
+//             10_000_000_000_000,
+//         )
+//         .await
+//         .expect("Error upload program bytes");
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    println!("factory_id {:?}", factory_program_id);
+//     println!("factory_id {:?}", factory_program_id);
 
-    // make admin in PTS
-    println!("add admin");
-    let factory_id_bytes: [u8; 32] = factory_program_id.into();
-    let factory_id: ActorId = factory_id_bytes.into();
-    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "AddAdmin", payload: (factory_id));
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     // make admin in PTS
+//     println!("add admin");
+//     let factory_id_bytes: [u8; 32] = factory_program_id.into();
+//     let factory_id: ActorId = factory_id_bytes.into();
+//     let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "AddAdmin", payload: (factory_id));
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    // mint tokens in PTS
-    println!("mint tokens");
-    let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "GetAccural", payload: ());
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     // mint tokens in PTS
+//     println!("mint tokens");
+//     let message_id = send_request!(api: &api, program_id: pts_program_id, service_name: "Pts", action: "GetAccural", payload: ());
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    // create lobby
-    println!("create lobby");
-    let config = poker_factory_client::LobbyConfig {
-        admin_id: api.get_actor_id(),
-        admin_name: "Name".to_string(),
-        lobby_name: "Lobby".to_string(),
-        small_blind: 5,
-        big_blind: 10,
-        starting_bank: 1000,
-        time_per_move_ms: 15_000,
-    };
+//     // create lobby
+//     println!("create lobby");
+//     let config = poker_factory_client::LobbyConfig {
+//         admin_id: api.get_actor_id(),
+//         admin_name: "Name".to_string(),
+//         lobby_name: "Lobby".to_string(),
+//         small_blind: 5,
+//         big_blind: 10,
+//         starting_bank: 1000,
+//         time_per_move_ms: 15_000,
+//     };
 
-    let request = [
-        "PokerFactory".encode(),
-        "CreateLobby".encode(),
-        (config.clone(), pks[0].1.clone(), None::<SignatureInfo>).encode(),
-    ]
-    .concat();
-    let gas = api
-        .calculate_handle_gas(None, factory_program_id, request, 1_000_000_000_000, true)
-        .await?;
-    println!("GAS {:?}", gas);
+//     let request = [
+//         "PokerFactory".encode(),
+//         "CreateLobby".encode(),
+//         (config.clone(), pks[0].1.clone(), None::<SignatureInfo>).encode(),
+//     ]
+//     .concat();
+//     let gas = api
+//         .calculate_handle_gas(None, factory_program_id, request, 1_000_000_000_000, true)
+//         .await?;
+//     println!("GAS {:?}", gas);
 
-    let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone(), None::<SignatureInfo>), value: 1_000_000_000_000);
-    assert!(listener.message_processed(message_id).await?.succeed());
+//     let message_id = send_request!(api: &api, program_id: factory_program_id, service_name: "PokerFactory", action: "CreateLobby", payload: (config, pks[0].1.clone(), None::<SignatureInfo>), value: 1_000_000_000_000);
+//     assert!(listener.message_processed(message_id).await?.succeed());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 #[codec(crate = sails_rs::scale_codec)]
@@ -162,6 +163,39 @@ pub struct Config {
     pub lobby_code_id: CodeId,
     pub gas_for_program: u64,
     pub gas_for_reply_deposit: u64,
+}
+
+#[tokio::test]
+async fn test_time_limit() -> Result<()> {
+    let api = GearApi::dev().await?;
+
+    let mut listener = api.subscribe().await?;
+    assert!(listener.blocks_running().await?);
+
+    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+    // let time_skip = time::Duration::from_secs(60);
+    // sleep(time_skip);
+    // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+    // println!("stage: {:?}", stage);
+
+    // let api = api
+    //     .clone()
+    //     .with(USERS_STR[1])
+    //     .expect("Unable to change signer.");
+    // let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+    // assert!(listener.message_processed(message_id).await?.succeed());
+    // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+    // println!("stage: {:?}", stage);
+    // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+    // println!("status: {:?}", status);
+    // assert_eq!(
+    //     status,
+    //     Status::Finished {
+    //         pots: vec![(15, vec![api.get_actor_id()])]
+    //     }
+    // );
+
+    Ok(())
 }
 
 // #[tokio::test]
@@ -890,7 +924,6 @@ pub struct Config {
 // }
 
 // #[tokio::test]
-// #[ignore]
 // async fn test_cancel_game() -> Result<()> {
 //     let api = GearApi::dev().await?;
 

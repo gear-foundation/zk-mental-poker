@@ -580,6 +580,16 @@ impl PokerService {
             _ => {
                 storage.refund_bets_to_players();
                 storage.reset_for_new_game();
+                storage.active_participants.clear_all();
+                storage
+                    .participants
+                    .append(&mut storage.waiting_participants);
+
+                for (id, _) in storage.participants.iter() {
+                    storage.active_participants.add(*id);
+                }
+
+
                 storage.status = Status::Registration;
             }
         }
@@ -961,7 +971,6 @@ impl PokerService {
         if let Some(last_active_time) = betting.last_active_time {
             let number_of_passes =
                 (current_time - last_active_time) / storage.config.time_per_move_ms;
-
             if number_of_passes != 0 {
                 let next_after_skips = if storage.active_participants.len() > 0 {
                     storage
@@ -971,9 +980,37 @@ impl PokerService {
                     None
                 };
 
-                let remaining_cnt =
-                    storage.active_participants.len() + storage.all_in_players.len();
-                if remaining_cnt == 1 {
+                let active_left = storage.active_participants.len();
+                let all_in_left = storage.all_in_players.len();
+                let acted_count = betting.acted_players.len();
+
+                if active_left == 0 && all_in_left == 0 {
+                    if let Some(winner) = next_after_skips {
+                        let prize: u128 = storage.betting_bank.values().copied().sum();
+
+                        let (_, win_participant) = storage
+                            .participants
+                            .iter_mut()
+                            .find(|(id, _)| *id == winner)
+                            .expect("winner must be a participant");
+                        win_participant.balance += prize;
+
+                        storage.status = Status::Finished {
+                            pots: vec![(prize, vec![winner])],
+                        };
+                        storage.betting = None;
+
+                        self.emit_event(Event::Finished {
+                            pots: vec![(prize, vec![winner])],
+                        })
+                        .expect("Event Error");
+                        return;
+                    } else {
+                        panic!("No players left to win the pot");
+                    }
+                }
+
+                if active_left + all_in_left  == 1 {
                     let winner = if let Some(w) = storage.active_participants.get(0).copied() {
                         w
                     } else {
@@ -997,6 +1034,37 @@ impl PokerService {
                         pots: vec![(prize, vec![winner])],
                     })
                     .expect("Event Error");
+                    return;
+                }
+
+                if active_left == 0 {
+                    storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
+                    self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
+                        .expect("Event Error");
+                    return;
+                }
+
+                if acted_count >= active_left {
+                    if *stage == Stage::River {
+                        storage.status = Status::WaitingForCardsToBeDisclosed;
+                        self.emit_event(Event::WaitingForCardsToBeDisclosed)
+                            .expect("Event Error");
+                        return;
+                    }
+
+                    *stage = stage.clone().next().expect("There is no next stage");
+                    storage.active_participants.reset_turn_index();
+                    storage.already_invested_in_the_circle.clear();
+                    betting.last_active_time = None;
+                    betting.acted_players.clear();
+                    betting.current_bet = 0;
+                    betting.turn = storage
+                        .active_participants
+                        .next()
+                        .expect("There is no next one");
+
+                    self.emit_event(Event::NextStage(stage.clone()))
+                        .expect("Event Error");
                     return;
                 }
 
@@ -1179,24 +1247,28 @@ impl PokerService {
             return;
         }
 
-        if betting.acted_players.len() == storage.active_participants.len()
-            && *stage == Stage::River
-        {
+        let active_count = storage.active_participants.len();
+        let acted_count = betting.acted_players.len();
+
+        if active_count == 0 {
+            storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
+            self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
+                .expect("Event Error");
+        }
+        else if acted_count >= active_count && *stage == Stage::River {
             storage.status = Status::WaitingForCardsToBeDisclosed;
             self.emit_event(Event::WaitingForCardsToBeDisclosed)
                 .expect("Event Error");
         }
-        // Check if the round is complete before River stage
-        else if betting.acted_players.len() == storage.active_participants.len() {
-            // if there's only one active player left, there's no point in betting any more
-            // and if there's nobody active player left(everybody call AllIn), there's no point in betting any more
-            if storage.active_participants.len() <= 1 {
+        else if acted_count >= active_count {
+            if active_count <= 1 {
                 storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
                 self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
                     .expect("Event Error");
             } else {
+                *stage = stage.clone().next().expect("There is no next stage");
                 storage.active_participants.reset_turn_index();
-                storage.already_invested_in_the_circle = HashMap::new();
+                storage.already_invested_in_the_circle.clear();
                 betting.turn = storage
                     .active_participants
                     .next()
@@ -1205,17 +1277,22 @@ impl PokerService {
                 betting.acted_players.clear();
                 betting.current_bet = 0;
 
-                *stage = stage.clone().next().expect("There is no next one");
                 self.emit_event(Event::NextStage(stage.clone()))
                     .expect("Event Error");
             }
-        } else {
+        }
+        else {
+            if storage.active_participants.is_empty() {
+                panic!("No active participants for the next turn");
+            }
+
             betting.turn = storage
                 .active_participants
                 .next()
                 .expect("The player must exist");
             betting.last_active_time = Some(current_time);
         }
+
         self.emit_event(Event::TurnIsMade { action })
             .expect("Event Error");
     }
@@ -1447,6 +1524,10 @@ impl PokerService {
 
     pub fn agg_pub_key(&self) -> ZkPublicKey {
         self.get().agg_pub_key.clone()
+    }
+
+    pub fn current_time(&self) -> u64 {
+        exec::block_timestamp()
     }
 }
 
