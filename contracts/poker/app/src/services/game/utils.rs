@@ -23,6 +23,10 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     }
 
     pub fn new_round(&mut self) {
+        if self.active_ids.is_empty() {
+            self.first_index = 0;
+            return;
+        }
         self.first_index = (self.first_index + 1) % self.active_ids.len() as u16;
     }
 
@@ -135,6 +139,16 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     }
 
     pub fn set_first_index(&mut self) {
+        if self.active_ids.is_empty() {
+            self.turn_index = 0;
+            self.first_index = 0;
+            return;
+        }
+
+        if self.first_index as usize >= self.active_ids.len() {
+            self.first_index = 0;
+        }
+
         self.turn_index = self.first_index as u64;
     }
 
@@ -153,6 +167,7 @@ impl<Id: Eq + Clone + Debug> TurnManager<Id> {
     pub fn clear_all(&mut self) {
         self.active_ids.clear();
         self.turn_index = 0;
+        self.first_index = 0;
     }
 }
 
@@ -1361,4 +1376,36 @@ mod tests {
         assert_eq!(tm_bulk.all(), tm_step.all());
         assert_eq!(tm_bulk.turn_index, tm_step.turn_index);
     }
+
+    #[test]
+    fn bug_case_flush_vs_pair_sidepots() {
+        let mut hands = HashMap::new();
+        hands.insert(1.into(), (Card::new(Suit::Diamonds, 11), Card::new(Suit::Diamonds, 12)));
+        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Hearts, 8)));
+        hands.insert(3.into(), (Card::new(Suit::Diamonds, 4), Card::new(Suit::Diamonds, 10)));
+
+        let table_cards = [
+            Card::new(Suit::Diamonds, 6),
+            Card::new(Suit::Diamonds, 9),
+            Card::new(Suit::Spades, 4),
+            Card::new(Suit::Hearts, 12),
+            Card::new(Suit::Diamonds, 5),
+        ];
+
+        let mut bank = HashMap::new();
+        bank.insert(1.into(), 100);
+        bank.insert(2.into(), 500);
+        bank.insert(3.into(), 150);
+
+        let pots = evaluate_round(hands, table_cards, &bank);
+        assert_eq!(
+            pots,
+            vec![
+                (300, vec![1.into()]),
+                (100, vec![3.into()]),
+                (350, vec![2.into()]),
+            ]
+        );
+    }
+
 }

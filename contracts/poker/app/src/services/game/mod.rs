@@ -1037,7 +1037,7 @@ impl PokerService {
                     return;
                 }
 
-                if active_left == 0 {
+                if *stage != Stage::River && active_left <= 1 {
                     storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
                     self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
                         .expect("Event Error");
@@ -1250,7 +1250,7 @@ impl PokerService {
         let active_count = storage.active_participants.len();
         let acted_count = betting.acted_players.len();
 
-        if active_count == 0 {
+        if active_count == 0 && *stage != Stage::River {
             storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
             self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
                 .expect("Event Error");
