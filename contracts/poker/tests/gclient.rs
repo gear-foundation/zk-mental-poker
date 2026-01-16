@@ -1,24 +1,23 @@
-use std::{thread::sleep, time};
+// use std::{thread::sleep, time};
 
-use gclient::EventListener;
-use gclient::{GearApi, Result};
-use sails_rs::{ActorId, Decode, Encode};
-mod utils_gclient;
-use crate::zk_loader::ZkLoaderData;
-use crate::{build_player_card_disclosure, init_deck_and_card_map};
-use gclient::EventProcessor;
-use gear_core::ids::prelude::CodeIdExt;
-use gear_core::ids::{CodeId, ProgramId};
-use poker_client::SessionConfig;
-use poker_client::ZkPublicKey;
-use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
-use sails_rs::TypeInfo;
+// use gclient::EventListener;
+// use gclient::{GearApi, Result};
+// use sails_rs::{ActorId, Decode, Encode};
+// mod utils_gclient;
+// use crate::zk_loader::ZkLoaderData;
+// use crate::{build_player_card_disclosure, init_deck_and_card_map};
+// use gclient::EventProcessor;
+// use gear_core::ids::prelude::CodeIdExt;
+// use gear_core::ids::{CodeId, ProgramId};
+// use poker_client::SessionConfig;
+// use poker_client::ZkPublicKey;
+// use poker_client::{Action, BettingStage, Card, Participant, Stage, Status};
+// use sails_rs::TypeInfo;
 
-use poker_factory_client::SignatureInfo;
+// use poker_factory_client::SignatureInfo;
 
-use std::fs;
-
-use utils_gclient::*;
+// use std::fs;
+// use utils_gclient::*;
 
 // #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
 // #[codec(crate = sails_rs::scale_codec)]
@@ -29,7 +28,6 @@ use utils_gclient::*;
 // }
 
 // #[tokio::test]
-// #[ignore]
 // async fn upload_contracts_to_testnet() -> Result<()> {
 //     // let api = GearApi::dev().await?;
 //     let api = GearApi::vara_testnet().await?;
@@ -156,47 +154,47 @@ use utils_gclient::*;
 //     Ok(())
 // }
 
-#[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
-#[codec(crate = sails_rs::scale_codec)]
-#[scale_info(crate = sails_rs::scale_info)]
-pub struct Config {
-    pub lobby_code_id: CodeId,
-    pub gas_for_program: u64,
-    pub gas_for_reply_deposit: u64,
-}
+// #[derive(Debug, Clone, Encode, Decode, TypeInfo, PartialEq, Eq)]
+// #[codec(crate = sails_rs::scale_codec)]
+// #[scale_info(crate = sails_rs::scale_info)]
+// pub struct Config {
+//     pub lobby_code_id: CodeId,
+//     pub gas_for_program: u64,
+//     pub gas_for_reply_deposit: u64,
+// }
 
-#[tokio::test]
-async fn test_time_limit() -> Result<()> {
-    let api = GearApi::dev().await?;
+// #[tokio::test]
+// async fn test_time_limit() -> Result<()> {
+//     let api = GearApi::dev().await?;
 
-    let mut listener = api.subscribe().await?;
-    assert!(listener.blocks_running().await?);
+//     let mut listener = api.subscribe().await?;
+//     assert!(listener.blocks_running().await?);
 
-    let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
-    // let time_skip = time::Duration::from_secs(60);
-    // sleep(time_skip);
-    // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    // println!("stage: {:?}", stage);
+//     let (program_id, _) = make_zk_actions(&api, &mut listener).await?;
+//     // let time_skip = time::Duration::from_secs(60);
+//     // sleep(time_skip);
+//     // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     // println!("stage: {:?}", stage);
 
-    // let api = api
-    //     .clone()
-    //     .with(USERS_STR[1])
-    //     .expect("Unable to change signer.");
-    // let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
-    // assert!(listener.message_processed(message_id).await?.succeed());
-    // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
-    // println!("stage: {:?}", stage);
-    // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
-    // println!("status: {:?}", status);
-    // assert_eq!(
-    //     status,
-    //     Status::Finished {
-    //         pots: vec![(15, vec![api.get_actor_id()])]
-    //     }
-    // );
+//     // let api = api
+//     //     .clone()
+//     //     .with(USERS_STR[1])
+//     //     .expect("Unable to change signer.");
+//     // let message_id = send_request!(api: &api, program_id: program_id, service_name: "Poker", action: "Turn", payload: (Action::Call));
+//     // assert!(listener.message_processed(message_id).await?.succeed());
+//     // let stage = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Betting", return_type: Option<BettingStage>, payload: ());
+//     // println!("stage: {:?}", stage);
+//     // let status = get_state!(api: &api, listener: listener, program_id: program_id, service_name: "Poker", action: "Status", return_type: Status, payload: ());
+//     // println!("status: {:?}", status);
+//     // assert_eq!(
+//     //     status,
+//     //     Status::Finished {
+//     //         pots: vec![(15, vec![api.get_actor_id()])]
+//     //     }
+//     // );
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 // #[tokio::test]
 // #[ignore]

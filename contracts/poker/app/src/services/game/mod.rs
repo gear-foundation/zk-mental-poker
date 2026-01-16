@@ -445,7 +445,6 @@ impl PokerService {
         }
     }
 
-
     /// Restarts the game, resetting status and refunding bets (if not Finished).
     /// Panics if caller is not admin.
     /// Resets game to WaitingShuffleVerification (if full) or Registration status.
@@ -481,21 +480,18 @@ impl PokerService {
             .participants
             .iter()
             .any(|(id, _)| *id == storage.config.admin_id)
-        {
-            if let Some((new_admin, _)) = storage
+            && let Some((new_admin, _)) = storage
                 .participants
                 .iter()
                 .max_by(|a, b| a.1.balance.cmp(&b.1.balance).then(a.0.cmp(&b.0)))
-            {
-                let old_admin = storage.config.admin_id;
-                storage.config.admin_id = *new_admin;
-                self.emit_event(Event::AdminChanged {
-                    old_admin,
-                    new_admin: *new_admin,
-                })
-                .ok();
-            } else {
-            }
+        {
+            let old_admin = storage.config.admin_id;
+            storage.config.admin_id = *new_admin;
+            self.emit_event(Event::AdminChanged {
+                old_admin,
+                new_admin: *new_admin,
+            })
+            .ok();
         }
 
         for (id, _) in storage.participants.iter() {
@@ -588,7 +584,6 @@ impl PokerService {
                 for (id, _) in storage.participants.iter() {
                     storage.active_participants.add(*id);
                 }
-
 
                 storage.status = Status::Registration;
             }
@@ -972,7 +967,7 @@ impl PokerService {
             let number_of_passes =
                 (current_time - last_active_time) / storage.config.time_per_move_ms;
             if number_of_passes != 0 {
-                let next_after_skips = if storage.active_participants.len() > 0 {
+                let next_after_skips = if !storage.active_participants.is_empty() {
                     storage
                         .active_participants
                         .skip_and_remove(number_of_passes)
@@ -1010,7 +1005,7 @@ impl PokerService {
                     }
                 }
 
-                if active_left + all_in_left  == 1 {
+                if active_left + all_in_left == 1 {
                     let winner = if let Some(w) = storage.active_participants.get(0).copied() {
                         w
                     } else {
@@ -1083,10 +1078,8 @@ impl PokerService {
             } else if betting.turn != player {
                 panic!("Not your turn!");
             }
-        } else {
-            if betting.turn != player {
-                panic!("Not your turn!");
-            }
+        } else if betting.turn != player {
+            panic!("Not your turn!");
         }
 
         let (_, participant) = storage
@@ -1254,13 +1247,11 @@ impl PokerService {
             storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
             self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
                 .expect("Event Error");
-        }
-        else if acted_count >= active_count && *stage == Stage::River {
+        } else if acted_count >= active_count && *stage == Stage::River {
             storage.status = Status::WaitingForCardsToBeDisclosed;
             self.emit_event(Event::WaitingForCardsToBeDisclosed)
                 .expect("Event Error");
-        }
-        else if acted_count >= active_count {
+        } else if acted_count >= active_count {
             if active_count <= 1 {
                 storage.status = Status::WaitingForAllTableCardsToBeDisclosed;
                 self.emit_event(Event::WaitingForAllTableCardsToBeDisclosed)
@@ -1280,8 +1271,7 @@ impl PokerService {
                 self.emit_event(Event::NextStage(stage.clone()))
                     .expect("Event Error");
             }
-        }
-        else {
+        } else {
             if storage.active_participants.is_empty() {
                 panic!("No active participants for the next turn");
             }
@@ -1383,7 +1373,7 @@ impl PokerService {
             .cloned()
             .collect();
 
-        if self.ids_equal(&storage) {
+        if self.ids_equal(storage) {
             let table_cards: [Card; 5] = match storage.revealed_table_cards.clone().try_into() {
                 Ok(array) => array,
                 Err(_) => unreachable!(),
@@ -1396,11 +1386,7 @@ impl PokerService {
                 .map(|(id, hand)| (*id, hand.clone()))
                 .collect();
 
-            let pots = evaluate_round(
-                revealed_for_eval,
-                table_cards,
-                &storage.betting_bank,
-            );
+            let pots = evaluate_round(revealed_for_eval, table_cards, &storage.betting_bank);
 
             let mut prizes_by_player: HashMap<ActorId, u128> = HashMap::new();
             for (amount, winners) in &pots {

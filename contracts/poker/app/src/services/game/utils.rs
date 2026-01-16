@@ -279,10 +279,10 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
     // ----- Straight Flush -----
     let mut best_sf: Option<u8> = None;
     for vs in suits.values() {
-        if vs.len() >= 5 {
-            if let Some(h) = highest_straight_high(vs) {
-                best_sf = Some(best_sf.map_or(h, |cur| cur.max(h)));
-            }
+        if vs.len() >= 5
+            && let Some(h) = highest_straight_high(vs)
+        {
+            best_sf = Some(best_sf.map_or(h, |cur| cur.max(h)));
         }
     }
     if let Some(h) = best_sf {
@@ -312,7 +312,7 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
             let mut t = vs.clone();
             t.sort_by(|a, b| b.cmp(a));
             t.truncate(5);
-            if best_flush.as_ref().map_or(true, |b| &t > b) {
+            if best_flush.as_ref().is_none_or(|b| &t > b) {
                 best_flush = Some(t);
             }
         }
@@ -335,7 +335,13 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
         [(&a, &2), (&b, &2), ..] if a != b => {
             let kicker = count_vec
                 .iter()
-                .filter_map(|&(&val, &cnt)| if val != a && val != b && cnt >= 1 { Some(val) } else { None })
+                .filter_map(|&(&val, &cnt)| {
+                    if val != a && val != b && cnt >= 1 {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
                 .max()
                 .unwrap_or(0);
             return HandRank::TwoPair(a.max(b), a.min(b), kicker);
@@ -352,7 +358,6 @@ fn rank_hand(cards: Vec<Card>) -> HandRank {
     top5.truncate(5);
     HandRank::HighCard(top5)
 }
-
 
 pub fn evaluate_round(
     hands: HashMap<ActorId, (Card, Card)>,
@@ -1059,15 +1064,21 @@ mod tests {
             Card::new(Suit::Hearts, 2),
             Card::new(Suit::Hearts, 9),
             Card::new(Suit::Hearts, 5),
-            Card::new(Suit::Diamonds, 7), 
+            Card::new(Suit::Diamonds, 7),
             Card::new(Suit::Clubs, 7),
         ];
 
         let mut hands = HashMap::new();
         // A: (A-high flush)
-        hands.insert(1.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3))); // A♥,3♥
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3)),
+        ); // A♥,3♥
         // B: pair K7
-        hands.insert(2.into(), (Card::new(Suit::Spades, 13), Card::new(Suit::Diamonds, 13))); // K♠,K♦
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Spades, 13), Card::new(Suit::Diamonds, 13)),
+        ); // K♠,K♦
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1080,16 +1091,22 @@ mod tests {
     #[test]
     fn pair_vs_pair_kicker_ace_wins() {
         let table_cards = [
-            Card::new(Suit::Hearts, 12),  // Q
-            Card::new(Suit::Clubs, 12),   // Q
+            Card::new(Suit::Hearts, 12), // Q
+            Card::new(Suit::Clubs, 12),  // Q
             Card::new(Suit::Clubs, 8),
             Card::new(Suit::Diamonds, 5),
             Card::new(Suit::Spades, 3),
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 9))); // A,9
-        hands.insert(2.into(), (Card::new(Suit::Diamonds, 13), Card::new(Suit::Diamonds, 11))); // K,J
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 9)),
+        ); // A,9
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 13), Card::new(Suit::Diamonds, 11)),
+        ); // K,J
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1102,16 +1119,22 @@ mod tests {
     #[test]
     fn pair_split_all_kickers_equal() {
         let table_cards = [
-            Card::new(Suit::Hearts, 12),    // Q
-            Card::new(Suit::Clubs, 12),     // Q
-            Card::new(Suit::Diamonds, 10),  // 10
-            Card::new(Suit::Clubs, 9),      // 9
-            Card::new(Suit::Spades, 8),     // 8
+            Card::new(Suit::Hearts, 12),   // Q
+            Card::new(Suit::Clubs, 12),    // Q
+            Card::new(Suit::Diamonds, 10), // 10
+            Card::new(Suit::Clubs, 9),     // 9
+            Card::new(Suit::Spades, 8),    // 8
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 7))); // A,7
-        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 7))); // A,7
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Clubs, 14), Card::new(Suit::Diamonds, 7)),
+        ); // A,7
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 7)),
+        ); // A,7
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1124,16 +1147,22 @@ mod tests {
     #[test]
     fn two_pair_beats_pair() {
         let table_cards = [
-            Card::new(Suit::Clubs, 13),   // K
-            Card::new(Suit::Diamonds, 13),// K
-            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Clubs, 13),    // K
+            Card::new(Suit::Diamonds, 13), // K
+            Card::new(Suit::Hearts, 9),    // 9
             Card::new(Suit::Spades, 5),
             Card::new(Suit::Clubs, 2),
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 4))); // 9,4
-        hands.insert(2.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3)));    // A,3
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 4)),
+        ); // 9,4
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Hearts, 14), Card::new(Suit::Hearts, 3)),
+        ); // A,3
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1146,16 +1175,22 @@ mod tests {
     #[test]
     fn two_pair_tie_kicker_decides() {
         let table_cards = [
-            Card::new(Suit::Clubs, 13),   // K
-            Card::new(Suit::Diamonds, 13),// K
-            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Clubs, 13),    // K
+            Card::new(Suit::Diamonds, 13), // K
+            Card::new(Suit::Hearts, 9),    // 9
             Card::new(Suit::Spades, 5),
             Card::new(Suit::Clubs, 2),
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 14))); // 9,A
-        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Clubs, 12)));    // 9,Q
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 14)),
+        ); // 9,A
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Clubs, 9), Card::new(Suit::Clubs, 12)),
+        ); // 9,Q
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 200);
@@ -1168,16 +1203,22 @@ mod tests {
     #[test]
     fn two_pair_split_same_kicker() {
         let table_cards = [
-            Card::new(Suit::Clubs, 13),   // K
-            Card::new(Suit::Diamonds, 13),// K
-            Card::new(Suit::Hearts, 9),   // 9
+            Card::new(Suit::Clubs, 13),    // K
+            Card::new(Suit::Diamonds, 13), // K
+            Card::new(Suit::Hearts, 9),    // 9
             Card::new(Suit::Spades, 5),
-            Card::new(Suit::Clubs, 14),   // A
+            Card::new(Suit::Clubs, 14), // A
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 12))); // 9,Q
-        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Clubs, 3)));     // 9,3
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 9), Card::new(Suit::Diamonds, 12)),
+        ); // 9,Q
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Clubs, 9), Card::new(Suit::Clubs, 3)),
+        ); // 9,3
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 150);
@@ -1198,8 +1239,14 @@ mod tests {
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10))); // A,10
-        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)));   // A,9
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10)),
+        ); // A,10
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)),
+        ); // A,9
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1220,8 +1267,14 @@ mod tests {
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10))); // A,10
-        hands.insert(2.into(), (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)));   // A,9
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Spades, 14), Card::new(Suit::Diamonds, 10)),
+        ); // A,10
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Diamonds, 14), Card::new(Suit::Clubs, 9)),
+        ); // A,9
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1231,7 +1284,6 @@ mod tests {
 
         assert_pots_eq(pots, vec![(200, vec![1.into()])]);
     }
-
 
     #[test]
     fn trips_beats_two_pair_general() {
@@ -1244,8 +1296,14 @@ mod tests {
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Diamonds, 8), Card::new(Suit::Hearts, 8))); // 8,8 → Trips
-        hands.insert(2.into(), (Card::new(Suit::Spades, 13),  Card::new(Suit::Diamonds, 8))); // K,8 → TwoPair
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 8), Card::new(Suit::Hearts, 8)),
+        ); // 8,8 → Trips
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Spades, 13), Card::new(Suit::Diamonds, 8)),
+        ); // K,8 → TwoPair
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 120);
@@ -1258,16 +1316,22 @@ mod tests {
     #[test]
     fn board_broadway_straight_split() {
         let table_cards = [
-            Card::new(Suit::Clubs, 10),     // T
-            Card::new(Suit::Diamonds, 11),  // J
-            Card::new(Suit::Hearts, 12),    // Q
-            Card::new(Suit::Spades, 13),    // K
-            Card::new(Suit::Clubs, 14),     // A
+            Card::new(Suit::Clubs, 10),    // T
+            Card::new(Suit::Diamonds, 11), // J
+            Card::new(Suit::Hearts, 12),   // Q
+            Card::new(Suit::Spades, 13),   // K
+            Card::new(Suit::Clubs, 14),    // A
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Hearts, 14), Card::new(Suit::Diamonds, 14)));
-        hands.insert(2.into(), (Card::new(Suit::Clubs, 2), Card::new(Suit::Spades, 2)));
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Hearts, 14), Card::new(Suit::Diamonds, 14)),
+        );
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Clubs, 2), Card::new(Suit::Spades, 2)),
+        );
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1288,8 +1352,14 @@ mod tests {
         ];
 
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Hearts, 9), Card::new(Suit::Diamonds, 9)));
-        hands.insert(2.into(), (Card::new(Suit::Clubs, 5), Card::new(Suit::Diamonds, 6)));
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Hearts, 9), Card::new(Suit::Diamonds, 9)),
+        );
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Clubs, 5), Card::new(Suit::Diamonds, 6)),
+        );
 
         let mut bank = HashMap::new();
         bank.insert(1.into(), 100);
@@ -1304,7 +1374,6 @@ mod tests {
         for &id in ids {
             tm.add(id);
         }
-        let mut tm = tm;
         tm.turn_index = turn_index;
         tm
     }
@@ -1362,7 +1431,6 @@ mod tests {
 
     #[test]
     fn skip_and_remove_equivalent_to_repeated_single_skips() {
-
         let mut tm_bulk = tm_with(&[1, 2, 3, 4], 1);
         let mut tm_step = tm_bulk.clone();
 
@@ -1380,9 +1448,18 @@ mod tests {
     #[test]
     fn bug_case_flush_vs_pair_sidepots() {
         let mut hands = HashMap::new();
-        hands.insert(1.into(), (Card::new(Suit::Diamonds, 11), Card::new(Suit::Diamonds, 12)));
-        hands.insert(2.into(), (Card::new(Suit::Clubs, 9),    Card::new(Suit::Hearts, 8)));
-        hands.insert(3.into(), (Card::new(Suit::Diamonds, 4), Card::new(Suit::Diamonds, 10)));
+        hands.insert(
+            1.into(),
+            (Card::new(Suit::Diamonds, 11), Card::new(Suit::Diamonds, 12)),
+        );
+        hands.insert(
+            2.into(),
+            (Card::new(Suit::Clubs, 9), Card::new(Suit::Hearts, 8)),
+        );
+        hands.insert(
+            3.into(),
+            (Card::new(Suit::Diamonds, 4), Card::new(Suit::Diamonds, 10)),
+        );
 
         let table_cards = [
             Card::new(Suit::Diamonds, 6),
@@ -1407,5 +1484,4 @@ mod tests {
             ]
         );
     }
-
 }
