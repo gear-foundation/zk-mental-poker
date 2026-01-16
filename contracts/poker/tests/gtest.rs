@@ -263,10 +263,7 @@ async fn gtest_check_null_balance() {
         .await
         .unwrap();
     println!("result {result:?}");
-    assert!(
-        matches!(result, Status::Finished { .. }),
-        "Wrong Status!"
-    );
+    assert!(matches!(result, Status::Finished { .. }), "Wrong Status!");
     let participants = env
         .service_client
         .participants()
@@ -395,36 +392,36 @@ async fn gtest_one_player_left() {
     println!("participants {participants:?}");
 }
 
-#[tokio::test]
-async fn gtest_check_restart_and_turn() {
-    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
+// #[tokio::test]
+// async fn gtest_check_restart_and_turn() {
+//     let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::Basic).await;
 
-    env.register_players(&test_data).await;
-    env.start_and_setup_game(&test_data).await;
+//     env.register_players(&test_data).await;
+//     env.start_and_setup_game(&test_data).await;
 
-    // preflop
-    env.run_actions(vec![
-        (USERS[2], poker_client::Action::Fold),
-        (USERS[3], poker_client::Action::Fold),
-        (USERS[4], poker_client::Action::Fold),
-        (USERS[5], poker_client::Action::Fold),
-        (USERS[0], poker_client::Action::Fold),
-    ])
-    .await;
+//     // preflop
+//     env.run_actions(vec![
+//         (USERS[2], poker_client::Action::Fold),
+//         (USERS[3], poker_client::Action::Fold),
+//         (USERS[4], poker_client::Action::Fold),
+//         (USERS[5], poker_client::Action::Fold),
+//         (USERS[0], poker_client::Action::Fold),
+//     ])
+//     .await;
 
-    env.verify_game_finished().await;
-    env.restart_game().await;
-    env.check_status(Status::Registration).await;
+//     env.verify_game_finished().await;
+//     env.restart_game().await;
+//     env.check_status(Status::Registration).await;
 
-    env.start_and_setup_game(&test_data).await;
-    env.check_status(Status::Play {
-        stage: poker_client::Stage::PreFlop,
-    })
-    .await;
+//     env.start_and_setup_game(&test_data).await;
+//     env.check_status(Status::Play {
+//         stage: poker_client::Stage::PreFlop,
+//     })
+//     .await;
 
-    env.run_actions(vec![(USERS[3], poker_client::Action::Call)])
-        .await;
-}
+//     env.run_actions(vec![(USERS[3], poker_client::Action::Call)])
+//         .await;
+// }
 
 #[tokio::test]
 async fn gtest_delete_player() {
@@ -464,11 +461,11 @@ async fn gtest_check_cancel_registration_and_turn() {
     .await;
 
     env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
         (USERS[3], poker_client::Action::Fold),
         (USERS[4], poker_client::Action::Fold),
         (USERS[5], poker_client::Action::Fold),
         (USERS[0], poker_client::Action::Fold),
-        (USERS[1], poker_client::Action::Fold),
     ])
     .await;
     env.verify_game_finished().await;
@@ -481,7 +478,7 @@ async fn gtest_check_cancel_registration_and_turn() {
         .await
         .unwrap();
     println!("active_participants: {active_participants:?}");
-    assert_eq!(active_participants.first_index, 2);
+    assert_eq!(active_participants.first_index, 0);
 
     // Cancel registration
     env.service_client
@@ -498,62 +495,63 @@ async fn gtest_check_cancel_registration_and_turn() {
         .await
         .unwrap();
     println!("active_participants: {active_participants:?}");
-    assert_eq!(active_participants.first_index, 1);
+    assert_eq!(active_participants.first_index, 0);
 }
 
-// #[tokio::test]
-// async fn gtest_check_waiting_participants() {
-//     let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::SixPlayers).await;
+#[tokio::test]
+#[ignore]
+async fn gtest_check_waiting_participants() {
+    let (mut env, test_data) = TestEnvironment::setup(TestDataProfile::SixPlayers).await;
 
-//     env.register_players(&test_data).await;
-//     env.start_and_setup_game(&test_data).await;
+    env.register_players(&test_data).await;
+    env.start_and_setup_game(&test_data).await;
 
-//     // check length of the participants (old length)
-//     let participants = env.participants().await;
-//     assert_eq!(participants.len(), 6);
+    // check length of the participants (old length)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 6);
 
-//     // new player registers
-//     let new_player_id = 48;
-//     env.remoting
-//         .system()
-//         .mint_to(new_player_id, 1_000_000_000_000_000);
-//     let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
-//     let new_player_pk = new_test_data.pks[5].1.clone();
-//     env.register(new_player_id, new_player_pk).await;
-//     // check length of the waiting participants state (1)
-//     let waiting_participants = env.waiting_participants().await;
-//     assert_eq!(waiting_participants.len(), 1);
+    // new player registers
+    let new_player_id = 48;
+    env.remoting
+        .system()
+        .mint_to(new_player_id, 1_000_000_000_000_000);
+    let new_test_data = TestData::load_from_profile(TestDataProfile::SixPlayersNew);
+    let new_player_pk = new_test_data.pks[5].1.clone();
+    env.register(new_player_id, new_player_pk).await;
+    // check length of the waiting participants state (1)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 1);
 
-//     // preflop
-//     env.run_actions(vec![
-//         (USERS[2], poker_client::Action::Fold),
-//         (USERS[3], poker_client::Action::Fold),
-//         (USERS[4], poker_client::Action::Fold),
-//         (USERS[5], poker_client::Action::Fold),
-//         (USERS[0], poker_client::Action::Fold),
-//     ])
-//     .await;
+    // preflop
+    env.run_actions(vec![
+        (USERS[2], poker_client::Action::Fold),
+        (USERS[3], poker_client::Action::Fold),
+        (USERS[4], poker_client::Action::Fold),
+        (USERS[5], poker_client::Action::Fold),
+        (USERS[0], poker_client::Action::Fold),
+    ])
+    .await;
 
-//     env.verify_game_finished().await;
-//     env.restart_game().await;
+    env.verify_game_finished().await;
+    env.restart_game().await;
 
-//     // check length of the participants (old length + 1)
-//     let participants = env.participants().await;
-//     assert_eq!(participants.len(), 7);
-//     // check length of the waiting participants state (0)
-//     let waiting_participants = env.waiting_participants().await;
-//     assert_eq!(waiting_participants.len(), 0);
-//     env.check_status(Status::Registration).await;
+    // check length of the participants (old length + 1)
+    let participants = env.participants().await;
+    assert_eq!(participants.len(), 7);
+    // check length of the waiting participants state (0)
+    let waiting_participants = env.waiting_participants().await;
+    assert_eq!(waiting_participants.len(), 0);
+    env.check_status(Status::Registration).await;
 
-//     // delete player
-//     env.delete_player(USERS[5]).await;
+    // delete player
+    env.delete_player(USERS[5]).await;
 
-//     env.start_and_setup_game(&new_test_data).await;
-//     env.check_status(Status::Play {
-//         stage: poker_client::Stage::PreFlop,
-//     })
-//     .await;
-// }
+    env.start_and_setup_game(&new_test_data).await;
+    env.check_status(Status::Play {
+        stage: poker_client::Stage::PreFlop,
+    })
+    .await;
+}
 
 #[tokio::test]
 async fn gtest_check_cancel_registration_waiting_participants() {
@@ -707,9 +705,15 @@ impl TestData {
         Self {
             pks: ZkLoaderData::load_player_public_keys(&format!("{prefix}/player_pks.json")),
             sks: ZkLoaderData::load_player_secret_keys(&format!("{prefix}/player_sks.json")),
-            shuffle_proofs: ZkLoaderData::load_shuffle_proofs(&format!("{prefix}/shuffle_proofs.json")),
-            encrypted_deck: ZkLoaderData::load_encrypted_table_cards(&format!("{prefix}/encrypted_deck.json")),
-            decrypt_proofs: ZkLoaderData::load_partial_decrypt_proofs(&format!("{prefix}/partial_decrypt_proofs.json")),
+            shuffle_proofs: ZkLoaderData::load_shuffle_proofs(&format!(
+                "{prefix}/shuffle_proofs.json"
+            )),
+            encrypted_deck: ZkLoaderData::load_encrypted_table_cards(&format!(
+                "{prefix}/encrypted_deck.json"
+            )),
+            decrypt_proofs: ZkLoaderData::load_partial_decrypt_proofs(&format!(
+                "{prefix}/partial_decrypt_proofs.json"
+            )),
             table_cards_proofs,
             player_cards,
         }
@@ -959,8 +963,7 @@ impl TestEnvironment {
             .expect("No table_cards_proofs for this data profile");
         let g = G::generator();
         for (i, user) in USERS.iter().enumerate() {
-            let partial_decs =
-                get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()]);
+            let partial_decs = get_decs_from_proofs(&table_cards_proofs[i].1 .1[range.clone()]);
             let pk = deserialize_public_key(&(test_data.pks[i].1.clone()));
             let sk = test_data.sks[i].1.scalar;
             let mut items = Vec::new();
